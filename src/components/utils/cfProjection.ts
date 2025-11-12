@@ -312,6 +312,45 @@ export function lambertXYToLatLon(
   };
 }
 
+export function lambertLatLonToXY(
+  lat: number,
+  lon: number,
+  params: LambertProjectionParams
+) {
+  const deg2rad = Math.PI / 180;
+  const phi = lat * deg2rad;
+  const lambda = lon * deg2rad;
+  const phi0 = params.lat0 * deg2rad;
+  const lambda0 = params.lon0 * deg2rad;
+  const [phi1Deg, phi2Deg] =
+    params.standardParallels.length >= 2
+      ? params.standardParallels
+      : [params.standardParallels[0], params.standardParallels[0]];
+  const phi1 = phi1Deg * deg2rad;
+  const phi2 = phi2Deg * deg2rad;
+  const n =
+    Math.abs(phi1 - phi2) < 1e-7
+      ? Math.sin(phi1)
+      : Math.log(Math.cos(phi1) / Math.cos(phi2)) /
+        Math.log(
+          Math.tan(Math.PI / 4 + phi2 / 2) /
+            Math.tan(Math.PI / 4 + phi1 / 2)
+        );
+  const F =
+    (Math.cos(phi1) *
+      Math.pow(Math.tan(Math.PI / 4 + phi1 / 2), n)) /
+    n;
+  const rho = params.radius * F * Math.pow(Math.tan(Math.PI / 4 + phi / 2), -n);
+  const rho0 =
+    params.radius *
+    F *
+    Math.pow(Math.tan(Math.PI / 4 + phi0 / 2), -n);
+  const theta = n * (lambda - lambda0);
+  const x = params.falseEasting + rho * Math.sin(theta);
+  const y = params.falseNorthing + rho0 - rho * Math.cos(theta);
+  return { x, y };
+}
+
 export async function detectProjectedGridMetadata(
   group: zarr.Group<zarr.FetchStore>,
   datavar: zarr.Array<zarr.DataType, zarr.FetchStore>

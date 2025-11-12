@@ -8,7 +8,15 @@ import {
 } from "./utils/colormapShaders.ts";
 import { decodeTime } from "./utils/timeHandling.ts";
 import { datashaderExample } from "./utils/exampleFormatters.ts";
-import { computed, onBeforeMount, onMounted, ref, watch, type Ref } from "vue";
+import {
+  computed,
+  onBeforeMount,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+  type Ref,
+} from "vue";
 
 import { useGlobeControlStore } from "./store/store.js";
 import { storeToRefs } from "pinia";
@@ -20,11 +28,17 @@ import {
   detectProjectedGridMetadata,
   lambertParamsFromAttributes,
   lambertXYToLatLon,
+  lambertLatLonToXY,
   readAxisValues,
   type LambertProjectionParams,
 } from "./utils/cfProjection.ts";
-import { latLongToXYZ, generateGridIndices } from "./utils/sphereMath.ts";
+import {
+  latLongToXYZ,
+  cartesianToLatLon,
+  generateGridIndices,
+} from "./utils/sphereMath.ts";
 import { focusCameraOnRegion } from "./utils/cameraFocus.ts";
+import { sampleColormapColor } from "./utils/colormapSampler.ts";
 import { getDataSourceStore } from "./utils/zarrUtils.ts";
 
 const props = defineProps<{
@@ -47,6 +61,7 @@ let box: Ref<HTMLDivElement | undefined> = ref();
 const {
   getScene,
   getCamera,
+  getRenderer,
   getOrbitControls,
   redraw,
   makeSnapshot,
@@ -67,6 +82,30 @@ const updateCount = ref(0);
 const updatingData = ref(false);
 const gridShape = ref<{ rows: number; cols: number }>();
 const lambertAxisOrder = ref<"yx" | "xy">("yx");
+const lambertAxes = ref<{
+  x: Float64Array;
+  y: Float64Array;
+  params: LambertProjectionParams;
+}>();
+const currentField = ref<Float32Array | null>(null);
+const currentUnits = ref<string | undefined>(undefined);
+const colormapRange = ref<{ low: number; high: number }>();
+const colormapTransform = ref<{ addOffset: number; scaleFactor: number }>();
+const hoverInfo = ref<
+  | {
+      x: number;
+      y: number;
+      value: number;
+      units?: string;
+      color?: string;
+    }
+  | null
+>(null);
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const hoverDelayMs = 300;
+const hoverTimeoutId = ref<number | null>(null);
+const isPointerDown = ref(false);
 
 watch(
   () => varnameSelector.value,
@@ -96,6 +135,20 @@ watch(
   }
 );
 
+watch(
+  () => bounds.value,
+  (val) => {
+    if (
+      val &&
+      typeof val.low === "number" &&
+      typeof val.high === "number" &&
+      Number.isFinite(val.high - val.low)
+    ) {
+      colormapRange.value = { low: val.low, high: val.high };
+    }
+  }
+);
+
 const gridsource = computed(() => {
   if (props.datasources) {
     return props.datasources.levels[0].grid;
@@ -117,6 +170,8 @@ async function datasourceUpdate() {
   gridShape.value = undefined;
   if (props.datasources !== undefined) {
     gridInfoLogged = false;
+    currentField.value = null;
+    lambertAxes.value = undefined;
     cameraCentered.value = false;
     await prepareLambertGeometry();
     await getData();
@@ -195,6 +250,11 @@ async function prepareLambertGeometry() {
       readAxisValues(metadataSource, metadata.x),
       readAxisValues(metadataSource, metadata.y),
     ]);
+    lambertAxes.value = {
+      x: xValues,
+      y: yValues,
+      params: lambertParams,
+    };
     if (!gridInfoLogged) {
       gridInfoLogged = true;
       console.info("[GlobeLambert] grid metadata", {
@@ -351,11 +411,13 @@ function updateColormap() {
     material.uniforms.scaleFactor.value = scaleFactor;
     redraw();
   }
+  colormapTransform.value = { addOffset, scaleFactor };
 }
 
 async function getData() {
   store.startLoading();
   try {
+    hoverInfo.value = null;
     updateCount.value += 1;
     const myUpdateCount = updateCount.value;
     if (updatingData.value) {
@@ -428,6 +490,10 @@ async function getData() {
       } else if (min === max) {
         max = min + 1e-6;
       }
+      const lowBound =
+        (bounds.value?.low as number | undefined) ?? min ?? 0;
+      const highBound =
+        (bounds.value?.high as number | undefined) ?? max ?? 1;
       const texture = new THREE.DataTexture(
         textureData,
         gridShape.value.cols,
@@ -436,14 +502,18 @@ async function getData() {
         THREE.FloatType,
         THREE.UVMapping
       );
+      currentField.value = textureData;
+      currentUnits.value = datavar.attrs?.units
+        ? String(datavar.attrs.units)
+        : undefined;
+      colormapRange.value = { low: lowBound, high: highBound };
       texture.needsUpdate = true;
-      const low = bounds.value?.low as number;
-      const high = bounds.value?.high as number;
       const { addOffset, scaleFactor } = calculateColorMapProperties(
-        low,
-        high,
+        lowBound,
+        highBound,
         invertColormap.value
       );
+      colormapTransform.value = { addOffset, scaleFactor };
       const material = makeTextureMaterial(
         texture,
         colormap.value,
@@ -493,6 +563,10 @@ function copyPythonExample() {
 
 onMounted(() => {
   getScene()?.add(mainMesh as THREE.Mesh);
+  canvas.value?.addEventListener("mousemove", handleMouseMove);
+  canvas.value?.addEventListener("mouseleave", handleMouseLeave);
+  canvas.value?.addEventListener("pointerdown", handlePointerDown);
+  window.addEventListener("pointerup", handlePointerUp);
 });
 
 onBeforeMount(async () => {
@@ -500,6 +574,13 @@ onBeforeMount(async () => {
   const material = new THREE.ShaderMaterial();
   mainMesh = new THREE.Mesh(geometry, material);
   await datasourceUpdate();
+});
+
+onBeforeUnmount(() => {
+  canvas.value?.removeEventListener("mousemove", handleMouseMove);
+  canvas.value?.removeEventListener("mouseleave", handleMouseLeave);
+  canvas.value?.removeEventListener("pointerdown", handlePointerDown);
+  window.removeEventListener("pointerup", handlePointerUp);
 });
 
 function centerCameraOn(
@@ -547,11 +628,156 @@ function orientLambertData(
   }
   return transposed;
 }
+
+function handleMouseMove(event: MouseEvent) {
+  if (isPointerDown.value) {
+    hoverInfo.value = null;
+    return;
+  }
+  if (hoverTimeoutId.value !== null) {
+    clearTimeout(hoverTimeoutId.value);
+  }
+  hoverTimeoutId.value = window.setTimeout(() => {
+    updateHoverInfo(event);
+    hoverTimeoutId.value = null;
+  }, hoverDelayMs);
+}
+
+function updateHoverInfo(event: MouseEvent) {
+  if (
+    !mainMesh ||
+    !gridShape.value ||
+    !lambertAxes.value ||
+    !currentField.value
+  ) {
+    hoverInfo.value = null;
+    return;
+  }
+  const canvasEl = canvas.value;
+  const boxEl = box.value;
+  const camera = getCamera();
+  if (!canvasEl || !boxEl || !camera) {
+    hoverInfo.value = null;
+    return;
+  }
+  const rect = canvasEl.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const intersects = raycaster.intersectObject(mainMesh, true);
+  if (!intersects.length) {
+    hoverInfo.value = null;
+    return;
+  }
+  const point = intersects[0].point;
+  const { lat, lon } = cartesianToLatLon(point.x, point.y, point.z);
+  const { params, x, y } = lambertAxes.value;
+  try {
+    const projected = lambertLatLonToXY(lat, lon, params);
+    const xIdx = findNearestIndex(x, projected.x);
+    const yIdx = findNearestIndex(y, projected.y);
+    const cols = gridShape.value.cols;
+    const index = yIdx * cols + xIdx;
+    const value = currentField.value[index];
+    if (value === undefined || Number.isNaN(value)) {
+      hoverInfo.value = null;
+      return;
+    }
+    let color: string | undefined = undefined;
+    if (colormapTransform.value) {
+      const normalized = THREE.MathUtils.clamp(
+        colormapTransform.value.addOffset +
+          colormapTransform.value.scaleFactor * value,
+        0,
+        1
+      );
+      color = sampleColormapColor(
+        getRenderer(),
+        colormap.value,
+        normalized
+      );
+    }
+    const boxRect = boxEl.getBoundingClientRect();
+    hoverInfo.value = {
+      x: event.clientX - boxRect.left,
+      y: event.clientY - boxRect.top - 16,
+      value,
+      units: currentUnits.value,
+      color,
+    };
+  } catch {
+    hoverInfo.value = null;
+  }
+}
+
+function handleMouseLeave() {
+  hoverInfo.value = null;
+  if (hoverTimeoutId.value !== null) {
+    clearTimeout(hoverTimeoutId.value);
+    hoverTimeoutId.value = null;
+  }
+  isPointerDown.value = false;
+}
+
+function findNearestIndex(array: Float64Array, value: number) {
+  if (!array.length) {
+    return 0;
+  }
+  let low = 0;
+  let high = array.length - 1;
+  const ascending = array[0] <= array[high];
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const midVal = array[mid];
+    if (midVal === value) {
+      return mid;
+    }
+    if (ascending ? midVal < value : midVal > value) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  const clamp = (idx: number) =>
+    Math.max(0, Math.min(array.length - 1, idx));
+  const lowIdx = clamp(low);
+  const highIdx = clamp(high);
+  const lowDiff = Math.abs(array[lowIdx] - value);
+  const highDiff = Math.abs(array[highIdx] - value);
+  return lowDiff < highDiff ? lowIdx : highIdx;
+}
+
+function handlePointerDown() {
+  isPointerDown.value = true;
+  hoverInfo.value = null;
+  if (hoverTimeoutId.value !== null) {
+    clearTimeout(hoverTimeoutId.value);
+    hoverTimeoutId.value = null;
+  }
+}
+
+function handlePointerUp() {
+  isPointerDown.value = false;
+}
+
 </script>
 
 <template>
   <div ref="box" class="globe_box" tabindex="0" autofocus>
     <canvas ref="canvas" class="globe_canvas"> </canvas>
+    <div
+      v-if="hoverInfo"
+      class="globe-tooltip"
+      :style="{ left: `${hoverInfo.x}px`, top: `${hoverInfo.y}px` }"
+    >
+      <span
+        v-if="hoverInfo.color"
+        class="globe-tooltip__swatch"
+        :style="{ background: hoverInfo.color }"
+      ></span>
+      {{ hoverInfo.value.toFixed(3) }}
+      <span v-if="hoverInfo.units">&nbsp;{{ hoverInfo.units }}</span>
+    </div>
   </div>
 </template>
 
@@ -563,9 +789,28 @@ div.globe_box {
   margin: 0;
   overflow: hidden;
   display: flex;
+  position: relative;
 }
 div.globe_canvas {
   padding: 0;
   margin: 0;
+}
+.globe-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  transform: translate(-50%, -100%);
+  white-space: nowrap;
+}
+.globe-tooltip__swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
 }
 </style>

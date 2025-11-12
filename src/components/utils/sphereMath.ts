@@ -12,6 +12,22 @@ export function latLongToXYZ(
   return [x, y, z];
 }
 
+export function cartesianToLatLon(
+  x: number,
+  y: number,
+  z: number
+): { lat: number; lon: number } {
+  const radius = Math.sqrt(x * x + y * y + z * z);
+  if (radius === 0) {
+    return { lat: 0, lon: 0 };
+  }
+  const lat = (Math.asin(z / radius) * 180) / Math.PI;
+  let lon = (Math.atan2(y, x) * 180) / Math.PI;
+  if (lon > 180) lon -= 360;
+  if (lon < -180) lon += 360;
+  return { lat, lon };
+}
+
 export function generateGridIndices(
   latCount: number,
   lonCount: number,
@@ -36,4 +52,3 @@ export function generateGridIndices(
 
   return indices;
 }
-

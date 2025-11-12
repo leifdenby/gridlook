@@ -439,6 +439,7 @@ export function useSharedGlobeLogic(
   return {
     getScene,
     getCamera,
+    getRenderer,
     getOrbitControls,
     getResizeObserver,
     redraw,
