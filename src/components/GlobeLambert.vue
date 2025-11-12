@@ -24,6 +24,7 @@ import {
   type LambertProjectionParams,
 } from "./utils/cfProjection.ts";
 import { latLongToXYZ, generateGridIndices } from "./utils/sphereMath.ts";
+import { focusCameraOnRegion } from "./utils/cameraFocus.ts";
 import { getDataSourceStore } from "./utils/zarrUtils.ts";
 
 const props = defineProps<{
@@ -231,7 +232,7 @@ async function prepareLambertGeometry() {
       rows: yValues.length,
       cols: xValues.length,
     };
-    const { geometry, center } = buildLambertGeometry(
+    const { geometry, center, extent } = buildLambertGeometry(
       xValues,
       yValues,
       lambertParams
@@ -252,10 +253,9 @@ async function prepareLambertGeometry() {
         ],
       },
       center,
+      extent,
     });
-    if (!cameraCentered.value) {
-      centerCameraOn(center.lat, center.lon);
-    }
+    centerCameraOn(center.lat, center.lon, extent.latSpan, extent.lonSpan);
     mainMesh!.geometry.dispose();
     mainMesh!.geometry = geometry;
     redraw();
@@ -268,7 +268,11 @@ function buildLambertGeometry(
   xCoords: Float64Array,
   yCoords: Float64Array,
   params: LambertProjectionParams
-) {
+): {
+  geometry: THREE.BufferGeometry;
+  center: { lat: number; lon: number };
+  extent: { latSpan: number; lonSpan: number };
+} {
   const rows = yCoords.length;
   const cols = xCoords.length;
   const vertices = new Float32Array(rows * cols * 3);
@@ -327,6 +331,7 @@ function buildLambertGeometry(
   return {
     geometry,
     center: { lat: centerLat, lon: centerLon },
+    extent: { latSpan: maxLat - minLat, lonSpan: maxLon - minLon },
   };
 }
 
@@ -497,22 +502,27 @@ onBeforeMount(async () => {
   await datasourceUpdate();
 });
 
-function centerCameraOn(lat: number, lon: number) {
-  const camera = getCamera();
-  if (!camera) {
+function centerCameraOn(
+  lat: number,
+  lon: number,
+  latSpan?: number,
+  lonSpan?: number
+) {
+  if (cameraCentered.value) {
     return;
   }
-  const distance = camera.position.length() || 3;
-  const [x, y, z] = latLongToXYZ(lat, lon, 1);
-  const direction = new THREE.Vector3(x, y, z).normalize();
-  camera.position.copy(direction.multiplyScalar(distance));
-  camera.lookAt(0, 0, 0);
-  const orbit = getOrbitControls();
-  if (orbit) {
-    orbit.target.set(0, 0, 0);
-    orbit.update();
+  const span = Math.max(latSpan ?? 0, lonSpan ?? 0);
+  if (!Number.isFinite(span) || span >= 120) {
+    return;
   }
-  redraw();
+  focusCameraOnRegion({
+    camera: getCamera(),
+    orbit: getOrbitControls(),
+    redraw,
+    lat,
+    lon,
+    span,
+  });
   cameraCentered.value = true;
 }
 

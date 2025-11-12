@@ -25,6 +25,7 @@ import { storeToRefs } from "pinia";
 import type { TSources } from "../types/GlobeTypes.ts";
 import { useLog } from "./utils/logging";
 import { useSharedGlobeLogic } from "./sharedGlobe.ts";
+import { focusCameraOnRegion } from "./utils/cameraFocus.ts";
 
 const props = defineProps<{
   datasources?: TSources;
@@ -50,6 +51,7 @@ const estimatedSpacing = ref(0);
 
 let points: THREE.Points | undefined = undefined;
 let gridInfoLogged = false;
+const cameraCentered = ref(false);
 
 let canvas: Ref<HTMLCanvasElement | undefined> = ref();
 let box: Ref<HTMLDivElement | undefined> = ref();
@@ -57,6 +59,7 @@ let box: Ref<HTMLDivElement | undefined> = ref();
 const {
   getScene,
   getCamera,
+  getOrbitControls,
   redraw,
   makeSnapshot,
   toggleRotate,
@@ -126,6 +129,7 @@ async function datasourceUpdate() {
   datavars.value = {};
   if (props.datasources !== undefined) {
     gridInfoLogged = false;
+    cameraCentered.value = false;
     await Promise.all([getData()]);
     updateLandSeaMask();
     updateColormap();
@@ -197,16 +201,17 @@ async function getGrid(grid: zarr.Group<zarr.Readable>, data: Float64Array) {
       "Latitudes, longitudes, and data must have the same length"
     );
   }
+  const latStats = computeStats(latitudes);
+  const lonStats = computeStats(longitudes);
   if (!gridInfoLogged) {
     gridInfoLogged = true;
-    const latStats = computeStats(latitudes);
-    const lonStats = computeStats(longitudes);
     console.info("[GlobeIrregular] grid info", {
       pointCount: N,
       latRange: latStats,
       lonRange: lonStats,
     });
   }
+  maybeCenterCamera(latStats, lonStats);
 
   // Allocate typed arrays for positions and values
   const positions = new Float32Array(N * 3);
@@ -244,12 +249,41 @@ function computeStats(arr: Float64Array) {
   return {
     min,
     max,
+    span: max - min,
     sample: {
       first: arr[0],
       mid: arr[Math.floor(arr.length / 2)],
       last: arr[arr.length - 1],
     },
   };
+}
+
+function maybeCenterCamera(
+  latStats: { min: number; max: number; span: number },
+  lonStats: { min: number; max: number; span: number }
+) {
+  if (cameraCentered.value) {
+    return;
+  }
+  const maxSpan = Math.max(latStats.span, lonStats.span);
+  if (!Number.isFinite(maxSpan) || maxSpan >= 120) {
+    return;
+  }
+  const centerLat = (latStats.min + latStats.max) / 2;
+  const centerLon = (lonStats.min + lonStats.max) / 2;
+  focusCamera(centerLat, centerLon, maxSpan);
+}
+
+function focusCamera(lat: number, lon: number, span: number) {
+  focusCameraOnRegion({
+    camera: getCamera(),
+    orbit: getOrbitControls(),
+    redraw,
+    lat,
+    lon,
+    span,
+  });
+  cameraCentered.value = true;
 }
 
 function updateLOD() {
