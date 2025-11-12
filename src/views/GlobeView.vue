@@ -6,6 +6,7 @@ import GlobeRegular from "@/components/GlobeRegular.vue";
 import GlobeIrregular from "@/components/GlobeIrregular.vue";
 import Globe from "@/components/Globe.vue";
 import GlobeControls from "@/components/GlobeControls.vue";
+import GlobeLambert from "@/components/GlobeLambert.vue";
 import { availableColormaps } from "@/components/utils/colormapShaders.js";
 import { ref, computed, watch, onMounted, type Ref } from "vue";
 import type { TColorMap, TSources } from "../types/GlobeTypes";
@@ -16,6 +17,10 @@ import { storeToRefs } from "pinia";
 import StoreUrlListener from "../components/store/storeUrlListener.vue";
 import { useUrlParameterStore } from "../components/store/paramStore";
 import { findCRSVar, getDataSourceStore } from "../components/utils/zarrUtils";
+import {
+  detectProjectedGridMetadata,
+  LAMBERT_GRID_MAPPING_NAMES,
+} from "@/components/utils/cfProjection";
 
 const props = defineProps<{ src: string }>();
 
@@ -23,6 +28,7 @@ const GRID_TYPES = {
   REGULAR: "regular",
   HEALPIX: "healpix",
   REGULAR_ROTATED: "regular_rotated",
+  LAMBERT: "lambert",
   TRIANGULAR: "triangular",
   GAUSSIAN: "gaussian",
   IRREGULAR: "irregular",
@@ -68,6 +74,8 @@ const modelInfo = computed(() => {
 const currentGlobeComponent = computed(() => {
   if (gridType.value === GRID_TYPES.HEALPIX) {
     return GlobeHealpix;
+  } else if (gridType.value === GRID_TYPES.LAMBERT) {
+    return GlobeLambert;
   } else if (
     gridType.value === GRID_TYPES.REGULAR_ROTATED ||
     gridType.value === GRID_TYPES.REGULAR
@@ -255,17 +263,25 @@ async function getGridType() {
     return GRID_TYPES.ERROR;
   }
   try {
+    let gridGroup:
+      | zarr.Group<zarr.FetchStore>
+      | undefined = undefined;
     try {
-      // CHECK IF TRIANGULAR
       const gridsource = datasources.value!.levels[0].grid;
       const gridRoot = zarr.root(new zarr.FetchStore(gridsource.store));
-      const grid = await zarr.open(gridRoot.resolve(gridsource.dataset), {
+      gridGroup = await zarr.open(gridRoot.resolve(gridsource.dataset), {
         kind: "group",
       });
-      await zarr.open(grid.resolve("vertex_of_cell"), {
-        kind: "array",
-      });
-      return GRID_TYPES.TRIANGULAR;
+    } catch {
+      gridGroup = undefined;
+    }
+    try {
+      if (gridGroup) {
+        await zarr.open(gridGroup.resolve("vertex_of_cell"), {
+          kind: "array",
+        });
+        return GRID_TYPES.TRIANGULAR;
+      }
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (e) {
       /* empty */
@@ -293,29 +309,45 @@ async function getGridType() {
     if (datavar.attrs.grid_mapping === "rotated_latitude_longitude") {
       return GRID_TYPES.REGULAR_ROTATED;
     }
+    if (gridGroup) {
+      try {
+        const projection = await detectProjectedGridMetadata(
+          gridGroup,
+          datavar
+        );
+        if (
+          projection?.gridMappingName &&
+          LAMBERT_GRID_MAPPING_NAMES.has(projection.gridMappingName)
+        ) {
+          return GRID_TYPES.LAMBERT;
+        }
+      } catch {
+        /* ignore projection errors */
+      }
+    }
     if ((datavar.attrs._ARRAY_DIMENSIONS as unknown[]).length >= 3) {
       return GRID_TYPES.REGULAR;
     }
-    try {
-      const gridsource = datasources.value!.levels[0].grid;
-      const gridRoot = zarr.root(new zarr.FetchStore(gridsource.store));
-      const grid = await zarr.open(gridRoot.resolve(gridsource.dataset), {
-        kind: "group",
-      });
+    if (gridGroup) {
+      try {
+        const latitudes = (
+          await zarr.open(gridGroup.resolve("lat"), { kind: "array" }).then(
+            zarr.get
+          )
+        ).data as Float64Array;
 
-      const latitudes = (
-        await zarr.open(grid.resolve("lat"), { kind: "array" }).then(zarr.get)
-      ).data as Float64Array;
+        const longitudes = (
+          await zarr.open(gridGroup.resolve("lon"), { kind: "array" }).then(
+            zarr.get
+          )
+        ).data as Float64Array;
 
-      const longitudes = (
-        await zarr.open(grid.resolve("lon"), { kind: "array" }).then(zarr.get)
-      ).data as Float64Array;
-
-      if (latitudes.length === longitudes.length) {
-        return GRID_TYPES.IRREGULAR;
+        if (latitudes.length === longitudes.length) {
+          return GRID_TYPES.IRREGULAR;
+        }
+      } catch {
+        /* fall through */
       }
-    } catch {
-      /* fall through */
     }
     return GRID_TYPES.GAUSSIAN;
   } catch (error) {

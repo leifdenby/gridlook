@@ -1,0 +1,415 @@
+<script lang="ts" setup>
+import * as THREE from "three";
+import * as zarr from "zarrita";
+import {
+  availableColormaps,
+  calculateColorMapProperties,
+  makeTextureMaterial,
+} from "./utils/colormapShaders.ts";
+import { decodeTime } from "./utils/timeHandling.ts";
+import { datashaderExample } from "./utils/exampleFormatters.ts";
+import { computed, onBeforeMount, onMounted, ref, watch, type Ref } from "vue";
+
+import { useGlobeControlStore } from "./store/store.js";
+import { storeToRefs } from "pinia";
+import type { TSources } from "../types/GlobeTypes.ts";
+import { useToast } from "primevue/usetoast";
+import { useLog } from "./utils/logging";
+import { useSharedGlobeLogic } from "./sharedGlobe.ts";
+import {
+  detectProjectedGridMetadata,
+  lambertParamsFromAttributes,
+  lambertXYToLatLon,
+  LAMBERT_GRID_MAPPING_NAMES,
+  readAxisValues,
+  type LambertProjectionParams,
+} from "./utils/cfProjection.ts";
+import { latLongToXYZ, generateGridIndices } from "./utils/sphereMath.ts";
+
+const props = defineProps<{
+  datasources?: TSources;
+}>();
+
+const store = useGlobeControlStore();
+const toast = useToast();
+const { logError } = useLog();
+const {
+  timeIndexSlider,
+  colormap,
+  varnameSelector,
+  invertColormap,
+  selection,
+} = storeToRefs(store);
+
+let canvas: Ref<HTMLCanvasElement | undefined> = ref();
+let box: Ref<HTMLDivElement | undefined> = ref();
+const {
+  getScene,
+  getCamera,
+  redraw,
+  makeSnapshot,
+  toggleRotate,
+  resetDataVars,
+  getDataVar,
+  getTimeVar,
+  updateLandSeaMask,
+} = useSharedGlobeLogic(canvas, box);
+
+const bounds = computed(() => selection.value);
+
+let mainMesh: THREE.Mesh | undefined = undefined;
+
+const updateCount = ref(0);
+const updatingData = ref(false);
+const gridShape = ref<{ rows: number; cols: number }>();
+const lambertAxisOrder = ref<"yx" | "xy">("yx");
+
+watch(
+  () => varnameSelector.value,
+  () => {
+    getData();
+  }
+);
+
+watch(
+  () => timeIndexSlider.value,
+  () => {
+    getData();
+  }
+);
+
+watch(
+  () => props.datasources,
+  () => {
+    datasourceUpdate();
+  }
+);
+
+watch(
+  [() => bounds.value, () => invertColormap.value, () => colormap.value],
+  () => {
+    updateColormap();
+  }
+);
+
+const gridsource = computed(() => {
+  if (props.datasources) {
+    return props.datasources.levels[0].grid;
+  } else {
+    return undefined;
+  }
+});
+
+const datasource = computed(() => {
+  if (props.datasources) {
+    return props.datasources.levels[0].datasources[varnameSelector.value];
+  } else {
+    return undefined;
+  }
+});
+
+async function datasourceUpdate() {
+  resetDataVars();
+  gridShape.value = undefined;
+  if (props.datasources !== undefined) {
+    await prepareLambertGeometry();
+    await getData();
+    updateLandSeaMask();
+    updateColormap();
+  }
+}
+
+async function prepareLambertGeometry() {
+  if (!props.datasources) {
+    return;
+  }
+  const gridsrc = gridsource.value;
+  if (!gridsrc) {
+    return;
+  }
+  const root = zarr.root(new zarr.FetchStore(gridsrc.store));
+  const grid = await zarr.open(root.resolve(gridsrc.dataset), {
+    kind: "group",
+  });
+  try {
+    const datavar = await getDataVar(varnameSelector.value, props.datasources);
+    if (!datavar) {
+      throw new Error("Variable unavailable for Lambert grid");
+    }
+    const metadata = await detectProjectedGridMetadata(grid, datavar);
+    if (
+      !metadata ||
+      !metadata.gridMappingName ||
+      !LAMBERT_GRID_MAPPING_NAMES.has(metadata.gridMappingName)
+    ) {
+      throw new Error("Lambert projection metadata missing");
+    }
+    const lambertParams = lambertParamsFromAttributes(
+      metadata.gridMappingAttrs
+    );
+    if (!lambertParams) {
+      throw new Error("Lambert projection parameters incomplete");
+    }
+    lambertAxisOrder.value =
+      metadata.y.index < metadata.x.index ? "yx" : "xy";
+    const [xValues, yValues] = await Promise.all([
+      readAxisValues(grid, metadata.x),
+      readAxisValues(grid, metadata.y),
+    ]);
+    gridShape.value = {
+      rows: yValues.length,
+      cols: xValues.length,
+    };
+    const geometry = buildLambertGeometry(xValues, yValues, lambertParams);
+    mainMesh!.geometry.dispose();
+    mainMesh!.geometry = geometry;
+    redraw();
+  } catch (error) {
+    logError(error, "Could not prepare Lambert grid");
+  }
+}
+
+function buildLambertGeometry(
+  xCoords: Float64Array,
+  yCoords: Float64Array,
+  params: LambertProjectionParams
+) {
+  const rows = yCoords.length;
+  const cols = xCoords.length;
+  const vertices = new Float32Array(rows * cols * 3);
+  const uvs = new Float32Array(rows * cols * 2);
+
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      const { lat, lon } = lambertXYToLatLon(xCoords[j], yCoords[i], params);
+      const [x, y, z] = latLongToXYZ(lat, lon, 1.0);
+      const index = i * cols + j;
+      vertices[index * 3 + 0] = x;
+      vertices[index * 3 + 1] = y;
+      vertices[index * 3 + 2] = z;
+      uvs[index * 2 + 0] = cols === 1 ? 0 : j / (cols - 1);
+      uvs[index * 2 + 1] = rows === 1 ? 0 : i / (rows - 1);
+    }
+  }
+
+  const indices = generateGridIndices(rows, cols, false);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new THREE.Float32BufferAttribute(vertices, 3)
+  );
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
+function updateColormap() {
+  const low = bounds.value?.low as number;
+  const high = bounds.value?.high as number;
+  const { addOffset, scaleFactor } = calculateColorMapProperties(
+    low,
+    high,
+    invertColormap.value
+  );
+
+  if (mainMesh) {
+    const material = mainMesh.material as THREE.ShaderMaterial;
+    material.uniforms.colormap.value = availableColormaps[colormap.value];
+    material.uniforms.addOffset.value = addOffset;
+    material.uniforms.scaleFactor.value = scaleFactor;
+    redraw();
+  }
+}
+
+async function getData() {
+  store.startLoading();
+  try {
+    updateCount.value += 1;
+    const myUpdateCount = updateCount.value;
+    if (updatingData.value) {
+      return;
+    }
+    updatingData.value = true;
+    if (!gridShape.value) {
+      await prepareLambertGeometry();
+    }
+    const localVarname = varnameSelector.value;
+    const currentTimeIndexSliderValue = timeIndexSlider.value;
+    const [timevar, datavar] = await Promise.all([
+      getTimeVar(props.datasources!),
+      getDataVar(localVarname, props.datasources!),
+    ]);
+
+    let timeinfo = {};
+    if (timevar !== undefined) {
+      const timeattrs = timevar.attrs;
+      const timevalues = (await zarr.get(timevar, [null])).data;
+      timeinfo = {
+        values: timevalues,
+        current: decodeTime(
+          (timevalues as number[])[currentTimeIndexSliderValue],
+          timeattrs
+        ),
+      };
+    }
+    if (datavar !== undefined && gridShape.value) {
+      const rawData = await zarr.get(datavar, [
+        currentTimeIndexSliderValue,
+        ...Array(datavar.shape.length - 1).fill(null),
+      ]);
+      const baseArray =
+        rawData.data instanceof Float64Array
+          ? (rawData.data as Float64Array)
+          : Float64Array.from(rawData.data as ArrayLike<number>);
+      const orderedData = orientLambertData(
+        baseArray,
+        gridShape.value.rows,
+        gridShape.value.cols,
+        lambertAxisOrder.value === "yx"
+      );
+      const fillCandidates = [
+        datavar.attrs?._FillValue,
+        datavar.attrs?.missing_value,
+      ].flat();
+      const fillValues = new Set(
+        fillCandidates
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value))
+      );
+      let min = Number.POSITIVE_INFINITY;
+      let max = Number.NEGATIVE_INFINITY;
+      const textureData = new Float32Array(orderedData.length);
+      for (let i = 0; i < orderedData.length; i++) {
+        const value = orderedData[i];
+        if (fillValues.has(value) || Number.isNaN(value)) {
+          textureData[i] = Number.NaN;
+          continue;
+        }
+        const value32 = Number(value);
+        textureData[i] = value32;
+        min = Math.min(min, value32);
+        max = Math.max(max, value32);
+      }
+      if (!Number.isFinite(min) || !Number.isFinite(max)) {
+        min = 0;
+        max = 1;
+      } else if (min === max) {
+        max = min + 1e-6;
+      }
+      const texture = new THREE.DataTexture(
+        textureData,
+        gridShape.value.cols,
+        gridShape.value.rows,
+        THREE.RedFormat,
+        THREE.FloatType,
+        THREE.UVMapping
+      );
+      texture.needsUpdate = true;
+      const low = bounds.value?.low as number;
+      const high = bounds.value?.high as number;
+      const { addOffset, scaleFactor } = calculateColorMapProperties(
+        low,
+        high,
+        invertColormap.value
+      );
+      const material = makeTextureMaterial(
+        texture,
+        colormap.value,
+        addOffset,
+        scaleFactor
+      );
+      mainMesh!.material = material;
+      mainMesh!.material.needsUpdate = true;
+
+      store.updateVarInfo({
+        attrs: datavar.attrs,
+        timeinfo,
+        timeRange: { start: 0, end: datavar.shape[0] - 1 },
+        bounds: { low: min, high: max },
+      });
+    }
+    updatingData.value = false;
+    if (updateCount.value !== myUpdateCount) {
+      await getData();
+    }
+  } catch (error) {
+    logError(error, "Could not fetch Lambert data");
+    updatingData.value = false;
+  } finally {
+    store.stopLoading();
+  }
+}
+
+function copyPythonExample() {
+  const example = datashaderExample({
+    cameraPosition: getCamera()!.position,
+    datasrc: datasource.value!.store + datasource.value!.dataset,
+    gridsrc: gridsource.value!.store + gridsource.value!.dataset,
+    varname: varnameSelector.value,
+    timeIndex: timeIndexSlider.value,
+    varbounds: bounds.value!,
+    colormap: colormap.value,
+    invertColormap: invertColormap.value,
+  });
+  navigator.clipboard.writeText(example);
+  toast.add({
+    detail: `Copied into clipboard`,
+    life: 3000,
+    severity: "success",
+  });
+}
+
+onMounted(() => {
+  getScene()?.add(mainMesh as THREE.Mesh);
+});
+
+onBeforeMount(async () => {
+  const geometry = new THREE.BufferGeometry();
+  const material = new THREE.ShaderMaterial();
+  mainMesh = new THREE.Mesh(geometry, material);
+  await datasourceUpdate();
+});
+
+defineExpose({ makeSnapshot, copyPythonExample, toggleRotate });
+
+function orientLambertData(
+  arr: Float64Array,
+  rows: number,
+  cols: number,
+  yFirst: boolean
+) {
+  if (yFirst) {
+    return arr;
+  }
+  const transposed = new Float64Array(arr.length);
+  for (let x = 0; x < cols; x++) {
+    for (let y = 0; y < rows; y++) {
+      const srcIndex = x * rows + y;
+      const dstIndex = y * cols + x;
+      transposed[dstIndex] = arr[srcIndex];
+    }
+  }
+  return transposed;
+}
+</script>
+
+<template>
+  <div ref="box" class="globe_box" tabindex="0" autofocus>
+    <canvas ref="canvas" class="globe_canvas"> </canvas>
+  </div>
+</template>
+
+<style>
+div.globe_box {
+  height: 100%;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  display: flex;
+}
+div.globe_canvas {
+  padding: 0;
+  margin: 0;
+}
+</style>

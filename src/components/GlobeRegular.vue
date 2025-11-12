@@ -17,6 +17,7 @@ import type { TSources } from "../types/GlobeTypes.ts";
 import { useToast } from "primevue/usetoast";
 import { useLog } from "./utils/logging";
 import { useSharedGlobeLogic } from "./sharedGlobe.ts";
+import { latLongToXYZ, generateGridIndices } from "./utils/sphereMath.ts";
 
 const props = defineProps<{
   datasources?: TSources;
@@ -153,19 +154,6 @@ function updateColormap() {
   }
 }
 
-function latLongToXYZ(lat: number, lon: number, radius: number) {
-  // Convert latitude and longitude from degrees to radians
-  const latRad = lat * (Math.PI / 180);
-  const lonRad = lon * (Math.PI / 180);
-
-  // Calculate the Cartesian coordinates
-  const x = radius * Math.cos(latRad) * Math.cos(lonRad);
-  const y = radius * Math.cos(latRad) * Math.sin(lonRad);
-  const z = radius * Math.sin(latRad);
-
-  return [x, y, z];
-}
-
 function rotatedToGeographic(
   latR: number,
   lonR: number,
@@ -260,31 +248,6 @@ function generateGridVerticesAndUVs(
   }
 
   return { vertices, uvs };
-}
-
-function generateGridIndices(
-  latCount: number,
-  lonCount: number,
-  isGlobal: boolean
-) {
-  const indices: number[] = [];
-  const latIterationEnd = latCount - 1;
-  const lonIterationEnd = isGlobal ? lonCount : lonCount - 1;
-
-  for (let latIt = 0; latIt < latIterationEnd; latIt++) {
-    for (let lonIt = 0; lonIt < lonIterationEnd; lonIt++) {
-      const nextJ = isGlobal ? (lonIt + 1) % lonCount : lonIt + 1;
-      const lowLeft = latIt * lonCount + lonIt;
-      const lowRight = latIt * lonCount + nextJ;
-      const topLeft = (latIt + 1) * lonCount + lonIt;
-      const topRight = (latIt + 1) * lonCount + nextJ;
-
-      indices.push(lowLeft, topRight, topLeft);
-      indices.push(lowLeft, lowRight, topRight);
-    }
-  }
-
-  return indices;
 }
 
 async function getGaussianGrid() {
