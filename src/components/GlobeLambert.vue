@@ -156,11 +156,57 @@ async function prepareLambertGeometry() {
       readAxisValues(grid, metadata.x),
       readAxisValues(grid, metadata.y),
     ]);
+    console.info("[GlobeLambert] grid metadata", {
+      xAxis: metadata.x.name,
+      yAxis: metadata.y.name,
+      xCount: xValues.length,
+      yCount: yValues.length,
+      axisOrder: lambertAxisOrder.value,
+      lambertParams,
+      gridMappingAttrsPreview: {
+        crs_wkt:
+          typeof metadata.gridMappingAttrs?.crs_wkt === "string"
+            ? metadata.gridMappingAttrs.crs_wkt.slice(0, 200)
+            : undefined,
+        spatial_ref:
+          typeof metadata.gridMappingAttrs?.spatial_ref === "string"
+            ? metadata.gridMappingAttrs.spatial_ref.slice(0, 200)
+            : undefined,
+      },
+      xSample: {
+        min: xValues[0],
+        mid: xValues[Math.floor(xValues.length / 2)],
+        max: xValues[xValues.length - 1],
+        units: metadata.x.attrs?.units,
+      },
+      ySample: {
+        min: yValues[0],
+        mid: yValues[Math.floor(yValues.length / 2)],
+        max: yValues[yValues.length - 1],
+        units: metadata.y.attrs?.units,
+      },
+    });
     gridShape.value = {
       rows: yValues.length,
       cols: xValues.length,
     };
     const geometry = buildLambertGeometry(xValues, yValues, lambertParams);
+    const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
+    console.info("[GlobeLambert] geometry extent", {
+      vertexCount: positions.count,
+      sample: {
+        first: [
+          positions.getX(0),
+          positions.getY(0),
+          positions.getZ(0),
+        ],
+        mid: [
+          positions.getX(Math.floor(positions.count / 2)),
+          positions.getY(Math.floor(positions.count / 2)),
+          positions.getZ(Math.floor(positions.count / 2)),
+        ],
+      },
+    });
     mainMesh!.geometry.dispose();
     mainMesh!.geometry = geometry;
     redraw();
@@ -178,10 +224,18 @@ function buildLambertGeometry(
   const cols = xCoords.length;
   const vertices = new Float32Array(rows * cols * 3);
   const uvs = new Float32Array(rows * cols * 2);
+  let minLat = Number.POSITIVE_INFINITY;
+  let maxLat = Number.NEGATIVE_INFINITY;
+  let minLon = Number.POSITIVE_INFINITY;
+  let maxLon = Number.NEGATIVE_INFINITY;
 
   for (let i = 0; i < rows; i++) {
     for (let j = 0; j < cols; j++) {
       const { lat, lon } = lambertXYToLatLon(xCoords[j], yCoords[i], params);
+      minLat = Math.min(minLat, lat);
+      maxLat = Math.max(maxLat, lat);
+      minLon = Math.min(minLon, lon);
+      maxLon = Math.max(maxLon, lon);
       const [x, y, z] = latLongToXYZ(lat, lon, 1.0);
       const index = i * cols + j;
       vertices[index * 3 + 0] = x;
@@ -200,6 +254,27 @@ function buildLambertGeometry(
   );
   geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices);
+  const centerLat = (minLat + maxLat) / 2;
+  const centerLon = (minLon + maxLon) / 2;
+  if (centerLat < 42) {
+    console.warn("[GlobeLambert] Unexpected lat range", {
+      minLat,
+      maxLat,
+      minLon,
+      maxLon,
+      centerLat,
+      centerLon,
+    });
+  } else {
+    console.info("[GlobeLambert] Lat/Lon extent", {
+      minLat,
+      maxLat,
+      minLon,
+      maxLon,
+      centerLat,
+      centerLon,
+    });
+  }
   return geometry;
 }
 

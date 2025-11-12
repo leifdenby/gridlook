@@ -86,12 +86,17 @@ function sanitizeGridMappingName(name: unknown) {
   return String(name).toLowerCase();
 }
 
+function numericValue(value: unknown): number | undefined {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : undefined;
+}
+
 function normalizeStandardParallel(value: unknown): number[] {
   if (value === undefined || value === null) {
     return [];
   }
   if (Array.isArray(value)) {
-    return value.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+    return value.map(numericValue).filter((v): v is number => v !== undefined);
   }
   if (
     typeof value === "object" &&
@@ -99,20 +104,12 @@ function normalizeStandardParallel(value: unknown): number[] {
     !Array.isArray(value)
   ) {
     const asArray = Array.from(value as ArrayLike<number>);
-    return asArray.map((v) => Number(v)).filter((v) => Number.isFinite(v));
+    return asArray
+      .map(numericValue)
+      .filter((v): v is number => v !== undefined);
   }
-  return [Number(value)].filter((v) => Number.isFinite(v));
-}
-
-function getLongitudeOrigin(attrs: zarr.Attributes | undefined) {
-  if (!attrs) return 0;
-  if (attrs.longitude_of_central_meridian !== undefined) {
-    return Number(attrs.longitude_of_central_meridian);
-  }
-  if (attrs.longitude_of_projection_origin !== undefined) {
-    return Number(attrs.longitude_of_projection_origin);
-  }
-  return 0;
+  const normalized = numericValue(value);
+  return normalized === undefined ? [] : [normalized];
 }
 
 function getEarthRadius(attrs: zarr.Attributes | undefined) {
@@ -138,27 +135,127 @@ export type LambertProjectionParams = {
   radius: number;
 };
 
+const WKT_STRING_FIELDS = [
+  "spatial_ref",
+  "crs_wkt",
+  "wkt",
+  "proj_wkt",
+  "well_known_text",
+];
+
+type WktParamMap = Record<string, number>;
+
+function firstFinite(values: Array<unknown>): number | undefined {
+  for (const value of values) {
+    const num = numericValue(value);
+    if (num !== undefined) {
+      return num;
+    }
+  }
+  return undefined;
+}
+
+function normalizeParamName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function parseWktParameters(attrs: zarr.Attributes | undefined): WktParamMap {
+  if (!attrs) return {};
+  const source = WKT_STRING_FIELDS.find(
+    (field) => typeof attrs[field] === "string"
+  );
+  if (!source) return {};
+  const wkt = String(attrs[source]);
+  const regex =
+    /PARAMETER\s*\[\s*"([^"]+)"\s*,\s*([-+]?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*,/g;
+  const params: WktParamMap = {};
+  let match: RegExpExecArray | null = null;
+  while ((match = regex.exec(wkt)) !== null) {
+    const name = normalizeParamName(match[1]);
+    const value = Number(match[2]);
+    if (Number.isFinite(value)) {
+      params[name] = value;
+    }
+  }
+  return params;
+}
+
 export function lambertParamsFromAttributes(
   attrs: zarr.Attributes | undefined
 ): LambertProjectionParams | undefined {
   if (!attrs) return undefined;
-  const standardParallels = normalizeStandardParallel(attrs.standard_parallel);
+  const wktParams = parseWktParameters(attrs);
+  if (Object.keys(wktParams).length > 0) {
+    console.info("[cfProjection] Parsed WKT params", wktParams);
+  } else {
+    console.warn("[cfProjection] No WKT parameters found on CRS attrs");
+  }
+  const wktParallelKeys = [
+    "latitude_of_1st_standard_parallel",
+    "latitude_of_2nd_standard_parallel",
+    "standard_parallel",
+    "standard_parallel_1",
+    "standard_parallel_2",
+  ];
+  const wktParallels = wktParallelKeys
+    .map((key) => wktParams[key])
+    .filter((v): v is number => v !== undefined);
+  let standardParallels = wktParallels.length
+    ? [...new Set(wktParallels)]
+    : [];
+  if (standardParallels.length === 0) {
+    standardParallels = normalizeStandardParallel(attrs.standard_parallel);
+  }
+  if (standardParallels.length === 0) {
+    const fallbackParallel = firstFinite([
+      attrs?.latitude_of_origin,
+      attrs?.latitude_of_projection_origin,
+    ]);
+    if (fallbackParallel !== undefined) {
+      standardParallels = [fallbackParallel];
+    }
+  }
   if (standardParallels.length === 0) {
     return undefined;
   }
   const lat0 =
-    attrs.latitude_of_projection_origin !== undefined
-      ? Number(attrs.latitude_of_projection_origin)
-      : 0;
-  const lon0 = getLongitudeOrigin(attrs);
+    firstFinite([
+      wktParams["latitude_of_false_origin"],
+      wktParams["latitude_of_origin"],
+      wktParams["latitude_of_projection_origin"],
+      attrs?.latitude_of_projection_origin,
+      attrs?.latitude_of_origin,
+    ]) ?? 0;
+  const lon0 =
+    firstFinite([
+      wktParams["longitude_of_false_origin"],
+      wktParams["central_meridian"],
+      wktParams["longitude_of_central_meridian"],
+      wktParams["longitude_of_origin"],
+      attrs?.longitude_of_central_meridian,
+      attrs?.longitude_of_projection_origin,
+    ]) ?? 0;
+  const falseEasting =
+    firstFinite([
+      wktParams["easting_at_false_origin"],
+      wktParams["false_easting"],
+      attrs?.false_easting,
+    ]) ?? 0;
+  const falseNorthing =
+    firstFinite([
+      wktParams["northing_at_false_origin"],
+      wktParams["false_northing"],
+      attrs?.false_northing,
+    ]) ?? 0;
   return {
     standardParallels,
     lat0,
     lon0,
-    falseEasting:
-      attrs.false_easting !== undefined ? Number(attrs.false_easting) : 0,
-    falseNorthing:
-      attrs.false_northing !== undefined ? Number(attrs.false_northing) : 0,
+    falseEasting,
+    falseNorthing,
     radius: getEarthRadius(attrs),
   };
 }
