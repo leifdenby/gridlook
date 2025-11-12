@@ -56,6 +56,7 @@ const longitudes = ref(new Float64Array());
 const latitudes = ref(new Float64Array());
 
 let mainMesh: THREE.Mesh | undefined = undefined;
+let gridInfoLogged = false;
 watch(
   () => varnameSelector.value,
   () => {
@@ -107,6 +108,7 @@ const datasource = computed(() => {
 async function datasourceUpdate() {
   resetDataVars();
   if (props.datasources !== undefined) {
+    gridInfoLogged = false;
     const root = zarr.root(new zarr.FetchStore(gridsource.value!.store));
     const grid = await zarr.open(root.resolve(gridsource.value!.dataset), {
       kind: "group",
@@ -134,6 +136,36 @@ async function getDims(grid: zarr.Group<Readable>) {
   const myLatitudes = latitudesData.data as Float64Array;
   longitudes.value = new Float64Array(new Set(myLongitudes));
   latitudes.value = new Float64Array(new Set(myLatitudes));
+  if (!gridInfoLogged) {
+    gridInfoLogged = true;
+    const latStats = getArrayStats(latitudes.value);
+    const lonStats = getArrayStats(longitudes.value);
+    console.info("[GlobeRegular] grid info", {
+      isRotated,
+      latCount: latitudes.value.length,
+      lonCount: longitudes.value.length,
+      latRange: latStats,
+      lonRange: lonStats,
+    });
+  }
+}
+
+function getArrayStats(arr: Float64Array) {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < arr.length; i++) {
+    min = Math.min(min, arr[i]);
+    max = Math.max(max, arr[i]);
+  }
+  return {
+    min,
+    max,
+    sample: {
+      first: arr[0],
+      mid: arr[Math.floor(arr.length / 2)],
+      last: arr[arr.length - 1],
+    },
+  };
 }
 
 function updateColormap() {

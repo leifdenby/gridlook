@@ -49,6 +49,7 @@ const updateCount = ref(0);
 const updatingData = ref(false);
 
 let mainMesh: THREE.Mesh | undefined = undefined;
+let gridInfoLogged = false;
 
 let canvas: Ref<HTMLCanvasElement | undefined> = ref();
 let box: Ref<HTMLDivElement | undefined> = ref();
@@ -123,6 +124,7 @@ const datasource = computed(() => {
 async function datasourceUpdate() {
   datavars.value = {};
   if (props.datasources !== undefined) {
+    gridInfoLogged = false;
     await Promise.all([fetchGrid(), getData()]);
     updateLandSeaMask();
     updateColormap();
@@ -142,6 +144,15 @@ async function fetchGrid() {
       new THREE.BufferAttribute(verts, 3)
     );
     myMesh.geometry.computeBoundingSphere();
+    if (!gridInfoLogged) {
+      gridInfoLogged = true;
+      const cellCount = verts.length / 9;
+      console.info("[GlobeTriangular] grid info", {
+        cellCount,
+        vertexCount: verts.length / 3,
+        gridDataset: gridsource.value?.dataset,
+      });
+    }
     redraw();
   } catch (error) {
     logError(error, "Could not fetch grid");

@@ -20,11 +20,11 @@ import {
   detectProjectedGridMetadata,
   lambertParamsFromAttributes,
   lambertXYToLatLon,
-  LAMBERT_GRID_MAPPING_NAMES,
   readAxisValues,
   type LambertProjectionParams,
 } from "./utils/cfProjection.ts";
 import { latLongToXYZ, generateGridIndices } from "./utils/sphereMath.ts";
+import { getDataSourceStore } from "./utils/zarrUtils.ts";
 
 const props = defineProps<{
   datasources?: TSources;
@@ -58,6 +58,7 @@ const {
 const bounds = computed(() => selection.value);
 
 let mainMesh: THREE.Mesh | undefined = undefined;
+let gridInfoLogged = false;
 
 const updateCount = ref(0);
 const updatingData = ref(false);
@@ -112,6 +113,7 @@ async function datasourceUpdate() {
   resetDataVars();
   gridShape.value = undefined;
   if (props.datasources !== undefined) {
+    gridInfoLogged = false;
     await prepareLambertGeometry();
     await getData();
     updateLandSeaMask();
@@ -127,21 +129,54 @@ async function prepareLambertGeometry() {
   if (!gridsrc) {
     return;
   }
-  const root = zarr.root(new zarr.FetchStore(gridsrc.store));
-  const grid = await zarr.open(root.resolve(gridsrc.dataset), {
-    kind: "group",
-  });
+  let gridGroup: zarr.Group<zarr.FetchStore> | undefined = undefined;
+  try {
+    const root = zarr.root(new zarr.FetchStore(gridsrc.store));
+    gridGroup = await zarr.open(root.resolve(gridsrc.dataset), {
+      kind: "group",
+    });
+  } catch (error) {
+    console.warn("[GlobeLambert] Could not open dedicated grid store", error);
+  }
   try {
     const datavar = await getDataVar(varnameSelector.value, props.datasources);
     if (!datavar) {
       throw new Error("Variable unavailable for Lambert grid");
     }
-    const metadata = await detectProjectedGridMetadata(grid, datavar);
-    if (
-      !metadata ||
-      !metadata.gridMappingName ||
-      !LAMBERT_GRID_MAPPING_NAMES.has(metadata.gridMappingName)
-    ) {
+    let metadataSource:
+      | zarr.Group<zarr.FetchStore>
+      | undefined = undefined;
+    let metadata:
+      | Awaited<ReturnType<typeof detectProjectedGridMetadata>>
+      | undefined = undefined;
+    if (gridGroup) {
+      try {
+        metadata = await detectProjectedGridMetadata(gridGroup, datavar);
+        metadataSource = gridGroup;
+      } catch (error) {
+        console.warn(
+          "[GlobeLambert] Failed to detect metadata in grid group",
+          error
+        );
+      }
+    }
+    if (!metadata) {
+      try {
+        const dataRoot = getDataSourceStore(
+          props.datasources!,
+          varnameSelector.value
+        );
+        const dataGroup = await zarr.open(dataRoot, { kind: "group" });
+        metadata = await detectProjectedGridMetadata(dataGroup, datavar);
+        metadataSource = dataGroup;
+      } catch (error) {
+        console.warn(
+          "[GlobeLambert] Failed to detect metadata in datasource group",
+          error
+        );
+      }
+    }
+    if (!metadata || !metadataSource || !metadata.x || !metadata.y) {
       throw new Error("Lambert projection metadata missing");
     }
     const lambertParams = lambertParamsFromAttributes(
@@ -153,39 +188,42 @@ async function prepareLambertGeometry() {
     lambertAxisOrder.value =
       metadata.y.index < metadata.x.index ? "yx" : "xy";
     const [xValues, yValues] = await Promise.all([
-      readAxisValues(grid, metadata.x),
-      readAxisValues(grid, metadata.y),
+      readAxisValues(metadataSource, metadata.x),
+      readAxisValues(metadataSource, metadata.y),
     ]);
-    console.info("[GlobeLambert] grid metadata", {
-      xAxis: metadata.x.name,
-      yAxis: metadata.y.name,
-      xCount: xValues.length,
-      yCount: yValues.length,
-      axisOrder: lambertAxisOrder.value,
-      lambertParams,
-      gridMappingAttrsPreview: {
-        crs_wkt:
-          typeof metadata.gridMappingAttrs?.crs_wkt === "string"
-            ? metadata.gridMappingAttrs.crs_wkt.slice(0, 200)
-            : undefined,
-        spatial_ref:
-          typeof metadata.gridMappingAttrs?.spatial_ref === "string"
-            ? metadata.gridMappingAttrs.spatial_ref.slice(0, 200)
-            : undefined,
-      },
-      xSample: {
-        min: xValues[0],
-        mid: xValues[Math.floor(xValues.length / 2)],
-        max: xValues[xValues.length - 1],
-        units: metadata.x.attrs?.units,
-      },
-      ySample: {
-        min: yValues[0],
-        mid: yValues[Math.floor(yValues.length / 2)],
-        max: yValues[yValues.length - 1],
-        units: metadata.y.attrs?.units,
-      },
-    });
+    if (!gridInfoLogged) {
+      gridInfoLogged = true;
+      console.info("[GlobeLambert] grid metadata", {
+        xAxis: metadata.x.name,
+        yAxis: metadata.y.name,
+        xCount: xValues.length,
+        yCount: yValues.length,
+        axisOrder: lambertAxisOrder.value,
+        lambertParams,
+        gridMappingAttrsPreview: {
+          crs_wkt:
+            typeof metadata.gridMappingAttrs?.crs_wkt === "string"
+              ? metadata.gridMappingAttrs.crs_wkt.slice(0, 200)
+              : undefined,
+          spatial_ref:
+            typeof metadata.gridMappingAttrs?.spatial_ref === "string"
+              ? metadata.gridMappingAttrs.spatial_ref.slice(0, 200)
+              : undefined,
+        },
+        xSample: {
+          min: xValues[0],
+          mid: xValues[Math.floor(xValues.length / 2)],
+          max: xValues[xValues.length - 1],
+          units: metadata.x.attrs?.units,
+        },
+        ySample: {
+          min: yValues[0],
+          mid: yValues[Math.floor(yValues.length / 2)],
+          max: yValues[yValues.length - 1],
+          units: metadata.y.attrs?.units,
+        },
+      });
+    }
     gridShape.value = {
       rows: yValues.length,
       cols: xValues.length,

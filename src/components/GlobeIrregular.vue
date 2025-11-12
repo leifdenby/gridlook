@@ -49,6 +49,7 @@ const updatingData = ref(false);
 const estimatedSpacing = ref(0);
 
 let points: THREE.Points | undefined = undefined;
+let gridInfoLogged = false;
 
 let canvas: Ref<HTMLCanvasElement | undefined> = ref();
 let box: Ref<HTMLDivElement | undefined> = ref();
@@ -124,6 +125,7 @@ const datasource = computed(() => {
 async function datasourceUpdate() {
   datavars.value = {};
   if (props.datasources !== undefined) {
+    gridInfoLogged = false;
     await Promise.all([getData()]);
     updateLandSeaMask();
     updateColormap();
@@ -195,6 +197,16 @@ async function getGrid(grid: zarr.Group<zarr.Readable>, data: Float64Array) {
       "Latitudes, longitudes, and data must have the same length"
     );
   }
+  if (!gridInfoLogged) {
+    gridInfoLogged = true;
+    const latStats = computeStats(latitudes);
+    const lonStats = computeStats(longitudes);
+    console.info("[GlobeIrregular] grid info", {
+      pointCount: N,
+      latRange: latStats,
+      lonRange: lonStats,
+    });
+  }
 
   // Allocate typed arrays for positions and values
   const positions = new Float32Array(N * 3);
@@ -220,6 +232,24 @@ async function getGrid(grid: zarr.Group<zarr.Readable>, data: Float64Array) {
   const material = points!.material as THREE.ShaderMaterial;
   material.needsUpdate = true;
   updateLOD();
+}
+
+function computeStats(arr: Float64Array) {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < arr.length; i++) {
+    min = Math.min(min, arr[i]);
+    max = Math.max(max, arr[i]);
+  }
+  return {
+    min,
+    max,
+    sample: {
+      first: arr[0],
+      mid: arr[Math.floor(arr.length / 2)],
+      last: arr[arr.length - 1],
+    },
+  };
 }
 
 function updateLOD() {

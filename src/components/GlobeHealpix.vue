@@ -59,6 +59,7 @@ let mainMeshes: THREE.Mesh<
   THREE.Material,
   THREE.Object3DEventMap
 >[] = new Array(HEALPIX_NUMCHUNKS);
+let gridInfoLogged = false;
 
 watch(
   () => varnameSelector.value,
@@ -111,6 +112,7 @@ const datasource = computed(() => {
 async function datasourceUpdate() {
   resetDataVars();
   if (props.datasources !== undefined) {
+    gridInfoLogged = false;
     if (props.datasources !== undefined) {
       await Promise.all([fetchGrid(), getData()]);
       updateLandSeaMask();
@@ -451,6 +453,15 @@ async function processDataVar(
     let dataMax = Number.NEGATIVE_INFINITY;
     const cellCoord = await getCells();
     const nside = await getNside();
+    if (!gridInfoLogged) {
+      gridInfoLogged = true;
+      console.info("[GlobeHealpix] grid info", {
+        nside,
+        limitedArea: cellCoord !== undefined,
+        cellCount: cellCoord?.length,
+        chunks: HEALPIX_NUMCHUNKS,
+      });
+    }
     await Promise.all(
       [...Array(HEALPIX_NUMCHUNKS).keys()].map(async (ipix) => {
         const texData = await getHealpixData(

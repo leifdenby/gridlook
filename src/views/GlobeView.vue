@@ -20,6 +20,7 @@ import { findCRSVar, getDataSourceStore } from "../components/utils/zarrUtils";
 import {
   detectProjectedGridMetadata,
   LAMBERT_GRID_MAPPING_NAMES,
+  lambertParamsFromAttributes,
 } from "@/components/utils/cfProjection";
 
 const props = defineProps<{ src: string }>();
@@ -95,6 +96,11 @@ async function setGridType() {
   }
   const localGridType = await getGridType();
   gridType.value = localGridType;
+  console.info("[Gridlook] Detected grid type", {
+    type: localGridType,
+    varname: varnameSelector.value,
+    dataset: datasources.value?.name,
+  });
 }
 
 watch(
@@ -259,6 +265,12 @@ const toggleRotate = () => {
 async function getGridType() {
   // FIXME: This is a clumsy hack to distinguish between different
   // grid types.
+  console.info("[Gridlook] getGridType() invoked", {
+    sourceValid: sourceValid.value,
+    varname: varnameSelector.value,
+    hasDatasources: !!datasources.value,
+    datasourceName: datasources.value?.name,
+  });
   if (!sourceValid.value) {
     return GRID_TYPES.ERROR;
   }
@@ -268,11 +280,14 @@ async function getGridType() {
       | undefined = undefined;
     try {
       const gridsource = datasources.value!.levels[0].grid;
+      console.info("[Gridlook] Opening grid group", gridsource);
       const gridRoot = zarr.root(new zarr.FetchStore(gridsource.store));
       gridGroup = await zarr.open(gridRoot.resolve(gridsource.dataset), {
         kind: "group",
       });
-    } catch {
+      console.info("[Gridlook] Grid group opened");
+    } catch (error) {
+      console.warn("[Gridlook] Failed to open grid group", error);
       gridGroup = undefined;
     }
     try {
@@ -288,26 +303,46 @@ async function getGridType() {
     }
 
     const root = getDataSourceStore(datasources.value!, varnameSelector.value);
+    console.info("[Gridlook] Data root resolved");
 
     const datavar = await zarr.open(root.resolve(varnameSelector.value), {
       kind: "array",
     });
+    console.info("[Gridlook] Data variable opened", {
+      shape: datavar.shape,
+      attrsKeys: Object.keys(datavar.attrs ?? {}),
+    });
 
+    let crs: zarr.Array<zarr.DataType, zarr.FetchStore> | undefined;
     try {
-      const crs = await zarr.open(
+      crs = await zarr.open(
         root.resolve(await findCRSVar(root, varnameSelector.value)),
         {
           kind: "array",
         }
       );
-      if (crs.attrs["grid_mapping_name"] === "healpix") {
+      console.info("[Gridlook] CRS variable opened", {
+        attrs: crs.attrs,
+      });
+      const gridMappingName = crs.attrs["grid_mapping_name"];
+      if (gridMappingName === "healpix") {
+        console.info("[Gridlook] CRS indicates HEALPix");
         return GRID_TYPES.HEALPIX;
+      }
+      if (
+        gridMappingName &&
+        LAMBERT_GRID_MAPPING_NAMES.has(String(gridMappingName).toLowerCase())
+      ) {
+        console.info("[Gridlook] CRS grid_mapping_name indicates Lambert");
+        return GRID_TYPES.LAMBERT;
+      }
+      const lambertParams = lambertParamsFromAttributes(crs.attrs);
+      if (lambertParams) {
+        console.info("[Gridlook] CRS WKT parsed as Lambert", lambertParams);
+        return GRID_TYPES.LAMBERT;
       }
     } catch {
       /* fall through to other cases */
-    }
-    if (datavar.attrs.grid_mapping === "rotated_latitude_longitude") {
-      return GRID_TYPES.REGULAR_ROTATED;
     }
     if (gridGroup) {
       try {
@@ -319,11 +354,16 @@ async function getGridType() {
           projection?.gridMappingName &&
           LAMBERT_GRID_MAPPING_NAMES.has(projection.gridMappingName)
         ) {
+          console.info("[Gridlook] Detected Lambert projection via CRS");
           return GRID_TYPES.LAMBERT;
         }
-      } catch {
-        /* ignore projection errors */
+      } catch (error) {
+        console.warn("[Gridlook] Lambert detection failed", error);
       }
+    }
+    if (datavar.attrs.grid_mapping === "rotated_latitude_longitude") {
+      console.info("[Gridlook] Rotated regular grid detected");
+      return GRID_TYPES.REGULAR_ROTATED;
     }
     if ((datavar.attrs._ARRAY_DIMENSIONS as unknown[]).length >= 3) {
       return GRID_TYPES.REGULAR;
