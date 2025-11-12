@@ -46,6 +46,7 @@ let box: Ref<HTMLDivElement | undefined> = ref();
 const {
   getScene,
   getCamera,
+  getOrbitControls,
   redraw,
   makeSnapshot,
   toggleRotate,
@@ -59,6 +60,7 @@ const bounds = computed(() => selection.value);
 
 let mainMesh: THREE.Mesh | undefined = undefined;
 let gridInfoLogged = false;
+const cameraCentered = ref(false);
 
 const updateCount = ref(0);
 const updatingData = ref(false);
@@ -114,6 +116,7 @@ async function datasourceUpdate() {
   gridShape.value = undefined;
   if (props.datasources !== undefined) {
     gridInfoLogged = false;
+    cameraCentered.value = false;
     await prepareLambertGeometry();
     await getData();
     updateLandSeaMask();
@@ -228,7 +231,11 @@ async function prepareLambertGeometry() {
       rows: yValues.length,
       cols: xValues.length,
     };
-    const geometry = buildLambertGeometry(xValues, yValues, lambertParams);
+    const { geometry, center } = buildLambertGeometry(
+      xValues,
+      yValues,
+      lambertParams
+    );
     const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
     console.info("[GlobeLambert] geometry extent", {
       vertexCount: positions.count,
@@ -244,7 +251,11 @@ async function prepareLambertGeometry() {
           positions.getZ(Math.floor(positions.count / 2)),
         ],
       },
+      center,
     });
+    if (!cameraCentered.value) {
+      centerCameraOn(center.lat, center.lon);
+    }
     mainMesh!.geometry.dispose();
     mainMesh!.geometry = geometry;
     redraw();
@@ -313,7 +324,10 @@ function buildLambertGeometry(
       centerLon,
     });
   }
-  return geometry;
+  return {
+    geometry,
+    center: { lat: centerLat, lon: centerLon },
+  };
 }
 
 function updateColormap() {
@@ -482,6 +496,25 @@ onBeforeMount(async () => {
   mainMesh = new THREE.Mesh(geometry, material);
   await datasourceUpdate();
 });
+
+function centerCameraOn(lat: number, lon: number) {
+  const camera = getCamera();
+  if (!camera) {
+    return;
+  }
+  const distance = camera.position.length() || 3;
+  const [x, y, z] = latLongToXYZ(lat, lon, 1);
+  const direction = new THREE.Vector3(x, y, z).normalize();
+  camera.position.copy(direction.multiplyScalar(distance));
+  camera.lookAt(0, 0, 0);
+  const orbit = getOrbitControls();
+  if (orbit) {
+    orbit.target.set(0, 0, 0);
+    orbit.update();
+  }
+  redraw();
+  cameraCentered.value = true;
+}
 
 defineExpose({ makeSnapshot, copyPythonExample, toggleRotate });
 
