@@ -17,10 +17,21 @@ export const LAND_SEA_MASK_MODES = {
 export type TLandSeaMaskMode =
   (typeof LAND_SEA_MASK_MODES)[keyof typeof LAND_SEA_MASK_MODES];
 
+export const COASTLINE_RESOLUTIONS = {
+  OFF: "off",
+  LOW: "110m",
+  MEDIUM: "50m",
+  HIGH: "10m",
+} as const;
+
+export type TCoastlineResolution =
+  (typeof COASTLINE_RESOLUTIONS)[keyof typeof COASTLINE_RESOLUTIONS];
+
 export const useGlobeControlStore = defineStore("globeControl", {
   state: () => {
     return {
-      showCoastLines: true,
+      coastlineResolution:
+        COASTLINE_RESOLUTIONS.MEDIUM as TCoastlineResolution,
       // simplified UI choice (Off|Sea|Land|Globe) — used by controls
       landSeaMaskChoice: LAND_SEA_MASK_MODES.OFF as TLandSeaMaskMode,
       // when true, use the textured versions; when false, use the greyscale/solid versions
@@ -41,8 +52,8 @@ export const useGlobeControlStore = defineStore("globeControl", {
     };
   },
   actions: {
-    toggleCoastLines() {
-      this.showCoastLines = !this.showCoastLines;
+    setCoastlineResolution(value: TCoastlineResolution) {
+      this.coastlineResolution = value;
     },
     startLoading() {
       this.loading = true;

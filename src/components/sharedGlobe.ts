@@ -8,7 +8,12 @@ import {
   type Ref,
   type ShallowRef,
 } from "vue";
-import { LAND_SEA_MASK_MODES, useGlobeControlStore } from "./store/store";
+import {
+  COASTLINE_RESOLUTIONS,
+  LAND_SEA_MASK_MODES,
+  type TCoastlineResolution,
+  useGlobeControlStore,
+} from "./store/store";
 import { geojson2geometry } from "./utils/geojson.ts";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
@@ -31,7 +36,7 @@ export function useSharedGlobeLogic(
   box: Ref<HTMLDivElement | undefined>
 ) {
   const store = useGlobeControlStore();
-  const { showCoastLines, landSeaMaskChoice, landSeaMaskUseTexture } =
+  const { coastlineResolution, landSeaMaskChoice, landSeaMaskUseTexture } =
     storeToRefs(store);
 
   const urlParameterStore = useUrlParameterStore();
@@ -41,7 +46,10 @@ export function useSharedGlobeLogic(
   const datavars: ShallowRef<
     Record<string, zarr.Array<zarr.DataType, zarr.FetchStore>>
   > = shallowRef({});
-  let coast: THREE.LineSegments | undefined = undefined;
+  const coastByResolution: Partial<
+    Record<TCoastlineResolution, THREE.LineSegments>
+  > = {};
+  let activeCoastResolution: TCoastlineResolution | undefined = undefined;
   let landSeaMask: THREE.Mesh | undefined = undefined;
   let scene: THREE.Scene | undefined = undefined;
   let camera: THREE.PerspectiveCamera | undefined = undefined;
@@ -59,7 +67,7 @@ export function useSharedGlobeLogic(
   let draggedPoint = new THREE.Vector3();
 
   watch(
-    () => showCoastLines.value,
+    () => coastlineResolution.value,
     () => {
       updateCoastlines();
     }
@@ -72,10 +80,6 @@ export function useSharedGlobeLogic(
       updateLandSeaMask();
     }
   );
-
-  function getCoast() {
-    return coast;
-  }
 
   function registerUpdateLOD(func: () => void) {
     updateLOD = func;
@@ -123,26 +127,47 @@ export function useSharedGlobeLogic(
     getRenderer()?.render(getScene()!, getCamera()!);
   }
 
-  async function getCoastlines() {
-    if (coast === undefined) {
-      const coastlines = await loadJSON("static/ne_50m_coastline.geojson");
+  function coastlinePathForResolution(resolution: TCoastlineResolution) {
+    if (resolution === COASTLINE_RESOLUTIONS.HIGH) {
+      return "static/ne_10m_coastline.geojson";
+    }
+    if (resolution === COASTLINE_RESOLUTIONS.LOW) {
+      return "static/ne_110m_coastline.geojson";
+    }
+    return "static/ne_50m_coastline.geojson";
+  }
+
+  async function getCoastlines(resolution: TCoastlineResolution) {
+    if (resolution === COASTLINE_RESOLUTIONS.OFF) {
+      return undefined;
+    }
+    if (!coastByResolution[resolution]) {
+      const coastlines = await loadJSON(coastlinePathForResolution(resolution));
       const geometry = geojson2geometry(coastlines, 1.002);
       const material = new THREE.LineBasicMaterial({
         color: "#ffffff",
       });
-      coast = new THREE.LineSegments(geometry, material);
-      coast.name = "coastlines";
+      const coast = new THREE.LineSegments(geometry, material);
+      coast.name = `coastlines-${resolution}`;
+      coastByResolution[resolution] = coast;
     }
-    return coast;
+    return coastByResolution[resolution];
   }
 
   async function updateCoastlines() {
-    if (showCoastLines.value === false) {
-      if (getCoast()) {
-        scene?.remove(getCoast()!);
+    if (activeCoastResolution) {
+      const activeCoast = coastByResolution[activeCoastResolution];
+      if (activeCoast) {
+        scene?.remove(activeCoast);
       }
-    } else {
-      scene?.add(await getCoastlines());
+      activeCoastResolution = undefined;
+    }
+    if (coastlineResolution.value !== COASTLINE_RESOLUTIONS.OFF) {
+      const nextCoast = await getCoastlines(coastlineResolution.value);
+      if (nextCoast) {
+        scene?.add(nextCoast);
+        activeCoastResolution = coastlineResolution.value;
+      }
     }
     redraw();
   }

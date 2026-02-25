@@ -35,6 +35,7 @@ const {
   hoverScalarValue,
   userBoundsLow,
   userBoundsHigh,
+  coastlineResolution,
   landSeaMaskChoice,
   landSeaMaskUseTexture,
 } = storeToRefs(store);
@@ -966,14 +967,13 @@ if (paramTimeIndex.value) {
       v-if="modelInfo && !isHidden"
       class="panel-block is-justify-content-space-between"
     >
-      <div>
-        <input
-          id="enable_coastlines"
-          type="checkbox"
-          :checked="store.showCoastLines"
-          @change="store.toggleCoastLines"
-        />
-        <label for="enable_coastlines">coastlines</label>
+      <div class="select is-small">
+        <select id="coastline_resolution" v-model="coastlineResolution">
+          <option value="off">coastline: off</option>
+          <option value="110m">coastline: 110m</option>
+          <option value="50m">coastline: 50m</option>
+          <option value="10m">coastline: 10m</option>
+        </select>
       </div>
       <div>
         <button class="button" type="button" @click="() => $emit('onRotate')">
