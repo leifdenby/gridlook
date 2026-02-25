@@ -50,6 +50,17 @@ See [Vite Configuration Reference](https://vitejs.dev/config/).
 
 The project is served at http://localhost:3000/ when you run `npm run dev`.
 
+Default dataset path can be configured via env var:
+
+```sh
+VITE_DEFAULT_DATASET_PATH=static/index_mr_dpp0066.json
+VITE_DEFAULT_VARIABLE_NAME=
+```
+
+`VITE_DEFAULT_VARIABLE_NAME` is optional and only used if that variable exists
+in the currently loaded dataset. Copy `.env.example` to `.env.local` and adjust
+the values.
+
 ## CORS & Hosting Notes
 
 To load datasets from services like DKRZ Swift, ensure [CORS](https://developer.mozilla.org/de/docs/Web/HTTP/Guides/CORS) is enabled on the server.

@@ -22,6 +22,7 @@ import {
   LAMBERT_GRID_MAPPING_NAMES,
   lambertParamsFromAttributes,
 } from "@/components/utils/cfProjection";
+import { DEFAULT_VARIABLE_NAME } from "../config/appConfig";
 
 const props = defineProps<{ src: string }>();
 
@@ -208,10 +209,16 @@ const updateSrc = async () => {
       if (src === props.src) {
         datasources.value = index.value;
       }
+      const availableVars = Object.keys(modelInfo.value!.vars);
+      const configuredDefaultVar =
+        DEFAULT_VARIABLE_NAME && availableVars.includes(DEFAULT_VARIABLE_NAME)
+          ? DEFAULT_VARIABLE_NAME
+          : undefined;
       varnameSelector.value =
         paramVarname.value ??
+        configuredDefaultVar ??
         modelInfo.value!.defaultVar ??
-        Object.keys(modelInfo.value!.vars)[0];
+        availableVars[0];
 
       if (
         datasources.value &&

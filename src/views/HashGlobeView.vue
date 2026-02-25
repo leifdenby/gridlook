@@ -8,11 +8,12 @@ import {
   STORE_PARAM_MAPPING,
   useUrlParameterStore,
 } from "../components/store/paramStore";
+import { DEFAULT_DATASET_PATH } from "../config/appConfig";
 
 type TParams = Partial<Record<TURLParameterValues, string>>;
 
-const defaultSrc = ref("static/index_mr_dpp0066.json");
-const src = ref("static/index_mr_dpp0066.json");
+const defaultSrc = ref(DEFAULT_DATASET_PATH);
+const src = ref(DEFAULT_DATASET_PATH);
 const params: Ref<TParams> = ref({});
 
 const store = useGlobeControlStore();
