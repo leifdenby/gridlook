@@ -83,6 +83,99 @@ const dataBounds = computed(() => {
   return varinfo.value?.bounds ?? {};
 });
 
+function finiteNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return value;
+}
+
+const sliderDomain = computed(() => {
+  const dataLow = finiteNumber(dataBounds.value.low);
+  const dataHigh = finiteNumber(dataBounds.value.high);
+  if (
+    dataLow !== undefined &&
+    dataHigh !== undefined &&
+    Number.isFinite(dataHigh - dataLow) &&
+    dataHigh > dataLow
+  ) {
+    return { low: dataLow, high: dataHigh };
+  }
+
+  const defaultLow = finiteNumber(defaultBounds.value.low);
+  const defaultHigh = finiteNumber(defaultBounds.value.high);
+  if (
+    defaultLow !== undefined &&
+    defaultHigh !== undefined &&
+    Number.isFinite(defaultHigh - defaultLow) &&
+    defaultHigh > defaultLow
+  ) {
+    return { low: defaultLow, high: defaultHigh };
+  }
+
+  return { low: 0, high: 1 };
+});
+
+const hasSliderDomain = computed(() => sliderDomain.value.high > sliderDomain.value.low);
+
+const userLowBound = computed(() => {
+  const low = finiteNumber(userBoundsLow.value);
+  if (low !== undefined) return low;
+  return sliderDomain.value.low;
+});
+
+const userHighBound = computed(() => {
+  const high = finiteNumber(userBoundsHigh.value);
+  if (high !== undefined) return high;
+  return sliderDomain.value.high;
+});
+
+const sliderStep = computed(() => {
+  const step = (sliderDomain.value.high - sliderDomain.value.low) / 500;
+  return Number.isFinite(step) && step > 0 ? step : 0.001;
+});
+
+function normalizeToPercent(value: number) {
+  const domain = sliderDomain.value;
+  const span = domain.high - domain.low;
+  if (span <= 0) return 0;
+  return ((value - domain.low) / span) * 100;
+}
+
+const selectedLowPct = computed(() => normalizeToPercent(userLowBound.value));
+const selectedHighPct = computed(() => normalizeToPercent(userHighBound.value));
+
+const distributionPath = computed(() => {
+  const bins = varinfo.value?.histogram?.bins;
+  if (!bins || bins.length === 0) {
+    return "M 0,28 L 100,28";
+  }
+
+  const maxCount = Math.max(...bins, 0);
+  if (maxCount <= 0) {
+    return "M 0,28 L 100,28";
+  }
+
+  const values: string[] = [];
+  for (let i = 0; i < bins.length; i += 1) {
+    const t = bins.length > 1 ? i / (bins.length - 1) : 0;
+    const x = t * 100;
+    const y = 28 - (bins[i] / maxCount) * 22;
+    values.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+  return `M ${values.join(" L ")}`;
+});
+
+function onUserLowSliderInput(event: Event) {
+  const input = event.target as HTMLInputElement;
+  userBoundsLow.value = Number(input.value);
+  pickedBounds.value = BOUND_MODES.USER;
+}
+
+function onUserHighSliderInput(event: Event) {
+  const input = event.target as HTMLInputElement;
+  userBoundsHigh.value = Number(input.value);
+  pickedBounds.value = BOUND_MODES.USER;
+}
+
 const bounds = computed(() => {
   if (activeBoundsMode.value === BOUND_MODES.DATA) {
     return dataBounds.value;
@@ -397,6 +490,52 @@ if (paramTimeIndex.value) {
           </div>
         </div>
 
+        <div
+          class="columns is-mobile active-row compact-row"
+          :class="{ active: activeBoundsMode === BOUND_MODES.USER }"
+        >
+          <div class="column is-full user-range-column">
+            <div class="distribution-plot-wrap">
+              <svg
+                class="distribution-plot"
+                viewBox="0 0 100 30"
+                preserveAspectRatio="none"
+              >
+                <rect
+                  class="distribution-selection"
+                  :x="selectedLowPct"
+                  y="0"
+                  :width="Math.max(0.5, selectedHighPct - selectedLowPct)"
+                  height="30"
+                />
+                <path class="distribution-line" :d="distributionPath" />
+              </svg>
+            </div>
+            <div class="slider-stack">
+              <input
+                class="w-100"
+                type="range"
+                :min="sliderDomain.low"
+                :max="sliderDomain.high"
+                :step="sliderStep"
+                :value="userLowBound"
+                :disabled="!hasSliderDomain"
+                @input="onUserLowSliderInput"
+              />
+              <input
+                class="w-100"
+                type="range"
+                :min="sliderDomain.low"
+                :max="sliderDomain.high"
+                :step="sliderStep"
+                :value="userHighBound"
+                :disabled="!hasSliderDomain"
+                @input="onUserHighSliderInput"
+              />
+            </div>
+          </div>
+        </div>
+
         <!-- User Bounds -->
         <div
           class="columns is-mobile active-row compact-row"
@@ -645,5 +784,40 @@ if (paramTimeIndex.value) {
   max-height: 2.5em;
   overflow: hidden;
   border-radius: bulmaUt.$radius;
+}
+
+.user-range-column {
+  width: 100%;
+}
+
+.distribution-plot-wrap {
+  height: 2.1rem;
+  border-radius: bulmaUt.$radius;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  margin-bottom: 0.4rem;
+}
+
+.distribution-plot {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: rgba(33, 150, 243, 0.08);
+}
+
+.distribution-selection {
+  fill: rgba(76, 175, 80, 0.24);
+}
+
+.distribution-line {
+  fill: none;
+  stroke: rgba(25, 118, 210, 0.95);
+  stroke-width: 1.2;
+}
+
+.slider-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 </style>

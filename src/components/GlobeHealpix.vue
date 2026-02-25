@@ -18,6 +18,7 @@ import { useToast } from "primevue/usetoast";
 import { useLog } from "./utils/logging";
 import { useSharedGlobeLogic } from "./sharedGlobe.ts";
 import { findCRSVar, getDataSourceStore } from "./utils/zarrUtils.ts";
+import { computeHistogram, sampleFiniteValues } from "./utils/histogram.ts";
 
 const props = defineProps<{
   datasources?: TSources;
@@ -269,7 +270,12 @@ async function getHealpixData(
     }
   }
 
-  return { texture: data2texture(dataSlice, {}), min, max };
+  return {
+    texture: data2texture(dataSlice, {}),
+    min,
+    max,
+    samples: sampleFiniteValues(dataSlice),
+  };
 }
 
 function distanceSquared(
@@ -451,6 +457,7 @@ async function processDataVar(
   if (datavar !== undefined) {
     let dataMin = Number.POSITIVE_INFINITY;
     let dataMax = Number.NEGATIVE_INFINITY;
+    const sampledValues: number[] = [];
     const cellCoord = await getCells();
     const nside = await getNside();
     if (!gridInfoLogged) {
@@ -481,6 +488,7 @@ async function processDataVar(
         // Update global data range
         dataMin = Math.min(dataMin, texData.min);
         dataMax = Math.max(dataMax, texData.max);
+        sampledValues.push(...texData.samples);
 
         const material = mainMeshes[ipix].material as THREE.ShaderMaterial;
         material.uniforms.data.value.dispose();
@@ -497,6 +505,11 @@ async function processDataVar(
       timeinfo,
       timeRange: { start: 0, end: datavar.shape[0] - 1 },
       bounds: { low: dataMin, high: dataMax },
+      histogram: {
+        low: dataMin,
+        high: dataMax,
+        bins: computeHistogram(sampledValues, dataMin, dataMax),
+      },
     });
   }
 }

@@ -2,6 +2,7 @@
 import * as THREE from "three";
 import * as zarr from "zarrita";
 import { grid2buffer, data2valueBuffer } from "./utils/gridlook.ts";
+import { computeHistogram } from "./utils/histogram.ts";
 import {
   makeColormapMaterial,
   availableColormaps,
@@ -220,6 +221,15 @@ async function getData() {
         timeinfo,
         timeRange: { start: 0, end: datavar.shape[0] - 1 },
         bounds: { low: dataBuffer.dataMin, high: dataBuffer.dataMax },
+        histogram: {
+          low: dataBuffer.dataMin,
+          high: dataBuffer.dataMax,
+          bins: computeHistogram(
+            rawData.data as ArrayLike<number>,
+            dataBuffer.dataMin,
+            dataBuffer.dataMax
+          ),
+        },
       });
       redraw();
     }

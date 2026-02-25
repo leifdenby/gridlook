@@ -16,6 +16,7 @@ export type TVarInfo = {
   timeinfo: EmptyObj | { current: Dayjs; values: Int32Array };
   timeRange: { start: number; end: number };
   bounds: TBounds;
+  histogram?: { low: number; high: number; bins: number[] };
   attrs: zarr.Attributes; //{ long_name: string; units: string };
 };
 

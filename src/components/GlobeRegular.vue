@@ -19,6 +19,7 @@ import { useLog } from "./utils/logging";
 import { useSharedGlobeLogic } from "./sharedGlobe.ts";
 import { latLongToXYZ, generateGridIndices } from "./utils/sphereMath.ts";
 import { focusCameraOnRegion } from "./utils/cameraFocus.ts";
+import { computeHistogram } from "./utils/histogram.ts";
 
 const props = defineProps<{
   datasources?: TSources;
@@ -487,6 +488,11 @@ async function getData() {
         timeinfo,
         timeRange: { start: 0, end: datavar.shape[0] - 1 },
         bounds: { low: min, high: max },
+        histogram: {
+          low: min,
+          high: max,
+          bins: computeHistogram(rawData.data as ArrayLike<number>, min, max),
+        },
       });
       redraw();
     }
