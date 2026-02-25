@@ -22,6 +22,7 @@ export const useUrlParameterStore = defineStore("urlParams", {
       paramInvertColormap: undefined as string | undefined,
       paramMaskMode: undefined as string | undefined,
       paramMaskingUseTexture: undefined as string | undefined,
+      paramTempUnit: undefined as string | undefined,
     };
   },
 });
@@ -42,4 +43,5 @@ export const STORE_PARAM_MAPPING: Partial<
   invertcolormap: "paramInvertColormap",
   maskmode: "paramMaskMode",
   maskusetexture: "paramMaskingUseTexture",
+  tempunit: "paramTempUnit",
 };

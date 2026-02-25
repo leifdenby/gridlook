@@ -29,6 +29,7 @@ const {
   timeIndexSlider,
   colormap,
   invertColormap,
+  temperatureUnitCelsius,
   varnameSelector,
   varinfo,
   userBoundsLow,
@@ -44,6 +45,7 @@ const {
   paramInvertColormap,
   paramMaskMode,
   paramMaskingUseTexture,
+  paramTempUnit,
 } = storeToRefs(urlParameterStore);
 
 const menuCollapsed: Ref<boolean> = ref(false);
@@ -52,6 +54,11 @@ const isMobileView: Ref<boolean> = ref(false);
 const autoColormap: Ref<boolean> = ref(true);
 const defaultBounds: Ref<TBounds> = ref({});
 const pickedBounds: Ref<TBoundModes> = ref(BOUND_MODES.AUTO);
+const colorbarWrap: Ref<HTMLDivElement | undefined> = ref(undefined);
+const isDraggingRange: Ref<boolean> = ref(false);
+const dragStartX: Ref<number> = ref(0);
+const dragStartLow: Ref<number> = ref(0);
+const dragStartHigh: Ref<number> = ref(0);
 
 // Local copy of timeIndexSlider to allow debounced updates
 const localTimeIndexSlider: Ref<number> = ref(timeIndexSlider.value);
@@ -88,9 +95,66 @@ function finiteNumber(value: unknown): number | undefined {
   return value;
 }
 
+function isKelvinUnit(units: string | undefined) {
+  if (!units) return false;
+  const normalized = units.trim().toLowerCase();
+  return normalized === "k" || normalized === "kelvin";
+}
+
+const currentVarRawUnits = computed(() => {
+  return String(varinfo.value?.attrs?.units ?? "-");
+});
+
+const hasKelvinUnit = computed(() => isKelvinUnit(currentVarRawUnits.value));
+
+function toDisplayValue(value: number) {
+  if (hasKelvinUnit.value && temperatureUnitCelsius.value) {
+    return value - 273.15;
+  }
+  return value;
+}
+
+function fromDisplayValue(value: number) {
+  if (hasKelvinUnit.value && temperatureUnitCelsius.value) {
+    return value + 273.15;
+  }
+  return value;
+}
+
+function roundToTwo(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+function formatOneSignificant(value: number) {
+  if (!Number.isFinite(value) || value === 0) return "0";
+  const abs = Math.abs(value);
+  const exponent = Math.floor(Math.log10(abs));
+  const factor = 10 ** exponent;
+  const rounded = Math.round(value / factor) * factor;
+  const decimals = Math.max(0, -exponent);
+  return rounded
+    .toFixed(decimals)
+    .replace(/\.0+$/, "")
+    .replace(/(\.\d*?)0+$/, "$1");
+}
+
+const dataBoundsDisplay = computed(() => {
+  const low = finiteNumber(dataBounds.value.low);
+  const high = finiteNumber(dataBounds.value.high);
+  if (low === undefined || high === undefined) return {};
+  return { low: toDisplayValue(low), high: toDisplayValue(high) };
+});
+
+const defaultBoundsDisplay = computed(() => {
+  const low = finiteNumber(defaultBounds.value.low);
+  const high = finiteNumber(defaultBounds.value.high);
+  if (low === undefined || high === undefined) return {};
+  return { low: toDisplayValue(low), high: toDisplayValue(high) };
+});
+
 const sliderDomain = computed(() => {
-  const dataLow = finiteNumber(dataBounds.value.low);
-  const dataHigh = finiteNumber(dataBounds.value.high);
+  const dataLow = finiteNumber(dataBoundsDisplay.value.low);
+  const dataHigh = finiteNumber(dataBoundsDisplay.value.high);
   if (
     dataLow !== undefined &&
     dataHigh !== undefined &&
@@ -100,8 +164,8 @@ const sliderDomain = computed(() => {
     return { low: dataLow, high: dataHigh };
   }
 
-  const defaultLow = finiteNumber(defaultBounds.value.low);
-  const defaultHigh = finiteNumber(defaultBounds.value.high);
+  const defaultLow = finiteNumber(defaultBoundsDisplay.value.low);
+  const defaultHigh = finiteNumber(defaultBoundsDisplay.value.high);
   if (
     defaultLow !== undefined &&
     defaultHigh !== undefined &&
@@ -117,15 +181,39 @@ const sliderDomain = computed(() => {
 const hasSliderDomain = computed(() => sliderDomain.value.high > sliderDomain.value.low);
 
 const userLowBound = computed(() => {
-  const low = finiteNumber(userBoundsLow.value);
+  const low = finiteNumber(userBoundsLowDisplay.value);
   if (low !== undefined) return low;
   return sliderDomain.value.low;
 });
 
 const userHighBound = computed(() => {
-  const high = finiteNumber(userBoundsHigh.value);
+  const high = finiteNumber(userBoundsHighDisplay.value);
   if (high !== undefined) return high;
   return sliderDomain.value.high;
+});
+
+const userBoundsLowDisplay = computed<number | undefined>({
+  get: () => {
+    const low = finiteNumber(userBoundsLow.value);
+    return low === undefined ? undefined : roundToTwo(toDisplayValue(low));
+  },
+  set: (v) => {
+    const value = finiteNumber(v);
+    userBoundsLow.value =
+      value === undefined ? undefined : roundToTwo(fromDisplayValue(value));
+  },
+});
+
+const userBoundsHighDisplay = computed<number | undefined>({
+  get: () => {
+    const high = finiteNumber(userBoundsHigh.value);
+    return high === undefined ? undefined : roundToTwo(toDisplayValue(high));
+  },
+  set: (v) => {
+    const value = finiteNumber(v);
+    userBoundsHigh.value =
+      value === undefined ? undefined : roundToTwo(fromDisplayValue(value));
+  },
 });
 
 const sliderStep = computed(() => {
@@ -142,6 +230,56 @@ function normalizeToPercent(value: number) {
 
 const selectedLowPct = computed(() => normalizeToPercent(userLowBound.value));
 const selectedHighPct = computed(() => normalizeToPercent(userHighBound.value));
+const selectedSpanPct = computed(() =>
+  Math.max(0.5, selectedHighPct.value - selectedLowPct.value)
+);
+const userLowLabel = computed(() => Number(userLowBound.value).toFixed(2));
+const userHighLabel = computed(() => Number(userHighBound.value).toFixed(2));
+
+function beginRangeDrag(event: MouseEvent) {
+  if (!hasSliderDomain.value || !colorbarWrap.value) return;
+  isDraggingRange.value = true;
+  dragStartX.value = event.clientX;
+  dragStartLow.value = userLowBound.value;
+  dragStartHigh.value = userHighBound.value;
+  pickedBounds.value = BOUND_MODES.USER;
+  window.addEventListener("mousemove", onRangeDrag);
+  window.addEventListener("mouseup", endRangeDrag);
+}
+
+function onRangeDrag(event: MouseEvent) {
+  if (!isDraggingRange.value || !colorbarWrap.value) return;
+  const rect = colorbarWrap.value.getBoundingClientRect();
+  if (rect.width <= 0) return;
+
+  const domain = sliderDomain.value;
+  const domainSpan = domain.high - domain.low;
+  const deltaPx = event.clientX - dragStartX.value;
+  const deltaValue = (deltaPx / rect.width) * domainSpan;
+
+  let nextLow = dragStartLow.value + deltaValue;
+  let nextHigh = dragStartHigh.value + deltaValue;
+
+  if (nextLow < domain.low) {
+    const shift = domain.low - nextLow;
+    nextLow += shift;
+    nextHigh += shift;
+  }
+  if (nextHigh > domain.high) {
+    const shift = nextHigh - domain.high;
+    nextLow -= shift;
+    nextHigh -= shift;
+  }
+
+  userBoundsLowDisplay.value = nextLow;
+  userBoundsHighDisplay.value = nextHigh;
+}
+
+function endRangeDrag() {
+  isDraggingRange.value = false;
+  window.removeEventListener("mousemove", onRangeDrag);
+  window.removeEventListener("mouseup", endRangeDrag);
+}
 
 const distributionPath = computed(() => {
   const bins = varinfo.value?.histogram?.bins;
@@ -164,15 +302,57 @@ const distributionPath = computed(() => {
   return `M ${values.join(" L ")}`;
 });
 
+const histogramMarkers = computed(() => {
+  const low = sliderDomain.value.low;
+  const high = sliderDomain.value.high;
+  if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) {
+    return [];
+  }
+
+  const spansZero = low <= 0 && high >= 0;
+  const span = high - low;
+  const interiorFractions = [0.2, 0.4, 0.6, 0.8];
+  const values = interiorFractions.map((f) => low + span * f);
+
+  if (spansZero) {
+    let closestIdx = 0;
+    let closestDist = Math.abs(values[0]);
+    for (let i = 1; i < values.length; i += 1) {
+      const dist = Math.abs(values[i]);
+      if (dist < closestDist) {
+        closestDist = dist;
+        closestIdx = i;
+      }
+    }
+    values[closestIdx] = 0;
+  }
+
+  const deduped = values.filter(
+    (v, i) => values.findIndex((other) => Math.abs(other - v) < 1e-9) === i
+  );
+
+  return deduped.slice(0, 4).map((value) => ({
+    value,
+    pct: Math.max(0, Math.min(100, normalizeToPercent(value))),
+    label: formatOneSignificant(value),
+  }));
+});
+
 function onUserLowSliderInput(event: Event) {
   const input = event.target as HTMLInputElement;
-  userBoundsLow.value = Number(input.value);
+  if (userBoundsHigh.value === undefined) {
+    userBoundsHigh.value = fromDisplayValue(sliderDomain.value.high);
+  }
+  userBoundsLowDisplay.value = Number(input.value);
   pickedBounds.value = BOUND_MODES.USER;
 }
 
 function onUserHighSliderInput(event: Event) {
   const input = event.target as HTMLInputElement;
-  userBoundsHigh.value = Number(input.value);
+  if (userBoundsLow.value === undefined) {
+    userBoundsLow.value = fromDisplayValue(sliderDomain.value.low);
+  }
+  userBoundsHighDisplay.value = Number(input.value);
   pickedBounds.value = BOUND_MODES.USER;
 }
 
@@ -215,7 +395,8 @@ const currentVarLongname = computed(() => {
 });
 
 const currentVarUnits = computed(() => {
-  return varinfo.value?.attrs?.units ?? "-";
+  if (hasKelvinUnit.value && temperatureUnitCelsius.value) return "C";
+  return currentVarRawUnits.value;
 });
 
 const isHidden = computed(() => {
@@ -227,6 +408,10 @@ const isHidden = computed(() => {
 watch(
   () => varnameSelector.value,
   () => {
+    // Reset user overrides when changing variable, so bounds return to auto.
+    userBoundsLow.value = undefined;
+    userBoundsHigh.value = undefined;
+    pickedBounds.value = BOUND_MODES.AUTO;
     setDefaultBounds();
     setDefaultColormap();
     store.updateBounds(bounds.value as TBounds);
@@ -245,6 +430,25 @@ watch(
   () => {
     setDefaultColormap();
   }
+);
+
+watch(
+  () => hasKelvinUnit.value,
+  () => {
+    if (hasKelvinUnit.value) {
+      if (paramTempUnit.value === "k") {
+        temperatureUnitCelsius.value = false;
+      } else if (paramTempUnit.value === "c") {
+        temperatureUnitCelsius.value = true;
+      } else {
+        // Default to Celsius display for Kelvin data.
+        temperatureUnitCelsius.value = true;
+      }
+    } else {
+      temperatureUnitCelsius.value = true;
+    }
+  },
+  { immediate: true }
 );
 
 function setDefaultBounds() {
@@ -282,6 +486,8 @@ onUnmounted(() => {
   window.removeEventListener("resize", () => {
     isMobileView.value = window.innerWidth < MOBILE_VIEW_THRESHOLD;
   });
+  window.removeEventListener("mousemove", onRangeDrag);
+  window.removeEventListener("mouseup", endRangeDrag);
 });
 
 // INITIALIZATION
@@ -407,7 +613,25 @@ if (paramTimeIndex.value) {
           </div>
         </div>
         <div class="has-text-right">
-          {{ currentVarLongname }} / {{ currentVarUnits }}
+          {{ currentVarLongname }} /
+          <button
+            v-if="hasKelvinUnit"
+            type="button"
+            class="button is-small unit-toggle"
+            @click="temperatureUnitCelsius = !temperatureUnitCelsius"
+          >
+            <span
+              class="unit-segment"
+              :class="{ active: !temperatureUnitCelsius }"
+              >K</span
+            >
+            <span
+              class="unit-segment"
+              :class="{ active: temperatureUnitCelsius }"
+              >C</span
+            >
+          </button>
+          <span v-else>{{ currentVarUnits }}</span>
         </div>
       </div>
     </div>
@@ -418,6 +642,22 @@ if (paramTimeIndex.value) {
           <div class="column">range</div>
           <div class="column">low</div>
           <div class="column has-text-right">high</div>
+        </div>
+
+        <!-- Auto Bounds -->
+        <div class="columns is-mobile active-row compact-row">
+          <div class="column">
+            <input
+              id="auto_bounds"
+              v-model="pickedBounds"
+              class="mb-3 mr-1"
+              type="radio"
+              value="auto"
+            />
+            <label for="auto_bounds">auto</label>
+          </div>
+          <div class="column"></div>
+          <div class="column has-text-right"></div>
         </div>
 
         <!-- Data Bounds -->
@@ -435,9 +675,11 @@ if (paramTimeIndex.value) {
             />
             <label for="data_bounds">data</label>
           </div>
-          <div class="column">{{ Number(dataBounds.low).toPrecision(4) }}</div>
+          <div class="column">
+            {{ Number(dataBoundsDisplay.low).toPrecision(4) }}
+          </div>
           <div class="column has-text-right">
-            {{ Number(dataBounds.high).toPrecision(4) }}
+            {{ Number(dataBoundsDisplay.high).toPrecision(4) }}
           </div>
         </div>
 
@@ -476,7 +718,7 @@ if (paramTimeIndex.value) {
                 defaultBounds.high === undefined,
             }"
           >
-            {{ Number(defaultBounds.low).toPrecision(4) }}
+            {{ Number(defaultBoundsDisplay.low).toPrecision(4) }}
           </div>
           <div
             class="column has-text-right"
@@ -486,10 +728,44 @@ if (paramTimeIndex.value) {
                 defaultBounds.high === undefined,
             }"
           >
-            {{ Number(defaultBounds.high).toPrecision(4) }}
+            {{ Number(defaultBoundsDisplay.high).toPrecision(4) }}
           </div>
         </div>
 
+        <!-- User Bounds -->
+        <div
+          class="columns is-mobile active-row compact-row"
+          :class="{ active: activeBoundsMode === BOUND_MODES.USER }"
+        >
+          <div class="column">
+            <input
+              id="user_bounds"
+              v-model="pickedBounds"
+              class="mr-1"
+              type="radio"
+              value="user"
+            />
+            <label for="user_bounds">user</label>
+          </div>
+          <div class="column">
+            <input
+              v-model.number="userBoundsLowDisplay"
+              size="10"
+              class="input"
+              type="number"
+              step="0.01"
+            />
+          </div>
+          <div class="column has-text-right">
+            <input
+              v-model.number="userBoundsHighDisplay"
+              size="10"
+              class="input"
+              type="number"
+              step="0.01"
+            />
+          </div>
+        </div>
         <div
           class="columns is-mobile active-row compact-row"
           :class="{ active: activeBoundsMode === BOUND_MODES.USER }"
@@ -510,6 +786,14 @@ if (paramTimeIndex.value) {
                 />
                 <path class="distribution-line" :d="distributionPath" />
               </svg>
+              <div
+                v-for="(marker, idx) in histogramMarkers"
+                :key="`hist-marker-${idx}`"
+                class="hist-marker"
+                :style="{ left: `${marker.pct}%` }"
+              >
+                <div class="hist-marker-label">{{ marker.label }}</div>
+              </div>
             </div>
             <div class="slider-stack">
               <input
@@ -536,89 +820,69 @@ if (paramTimeIndex.value) {
           </div>
         </div>
 
-        <!-- User Bounds -->
-        <div
-          class="columns is-mobile active-row compact-row"
-          :class="{ active: activeBoundsMode === BOUND_MODES.USER }"
-        >
-          <div class="column">
-            <input
-              id="user_bounds"
-              v-model="pickedBounds"
-              class="mr-1"
-              type="radio"
-              value="user"
-            />
-            <label for="user_bounds">user</label>
-          </div>
-          <div class="column">
-            <input
-              v-model.number="userBoundsLow"
-              size="10"
-              class="input"
-              type="number"
-            />
-          </div>
-          <div class="column has-text-right">
-            <input
-              v-model.number="userBoundsHigh"
-              size="10"
-              class="input"
-              type="number"
-            />
-          </div>
-        </div>
-
-        <!-- Auto Bounds -->
-        <div class="columns is-mobile active-row compact-row">
-          <div class="column">
-            <input
-              id="auto_bounds"
-              v-model="pickedBounds"
-              class="mb-3 mr-1"
-              type="radio"
-              value="auto"
-            />
-            <label for="auto_bounds">auto</label>
-          </div>
-          <div class="column"></div>
-          <div class="column has-text-right"></div>
-        </div>
-
-        <!-- Colormap Select + ColorBar -->
+        <!-- ColorBar -->
         <div class="columns is-mobile compact-row">
-          <div class="column">
-            <div class="select is-fullwidth">
-              <select v-model="colormap">
-                <option v-for="cm in modelInfo.colormaps" :key="cm" :value="cm">
-                  {{ cm }}
-                </option>
-              </select>
+          <div class="column is-full">
+            <div ref="colorbarWrap" class="hcolormap-wrap">
+              <div class="hcolormap-muted" />
+              <div
+                class="hcolormap-window"
+                :style="{
+                  left: `${selectedLowPct}%`,
+                  width: `${selectedSpanPct}%`,
+                }"
+                @mousedown.prevent="beginRangeDrag"
+              >
+                <ColorBar
+                  class="hcolormap"
+                  :colormap="colormap"
+                  :invert-colormap="invertColormap"
+                />
+              </div>
+              <div
+                class="cmap-end-label cmap-end-label-low"
+                :style="{ left: `${selectedLowPct}%` }"
+              >
+                {{ userLowLabel }}
+              </div>
+              <div
+                class="cmap-end-label cmap-end-label-high"
+                :style="{ left: `${selectedHighPct}%` }"
+              >
+                {{ userHighLabel }}
+              </div>
             </div>
           </div>
-          <div class="column is-three-fifths">
-            <ColorBar
-              class="hcolormap"
-              :colormap="colormap"
-              :invert-colormap="invertColormap"
-            />
-          </div>
         </div>
 
-        <!-- Colormap checkboxes -->
+        <!-- Colormap controls -->
         <div class="columns is-mobile compact-row">
-          <div class="column py-2">
-            <input
-              id="invert_colormap"
-              v-model="invertColormap"
-              type="checkbox"
-            />
-            <label for="invert_colormap">invert</label>
-          </div>
-          <div class="column"></div>
-          <div class="column has-text-right py-2">
-            <input id="auto_colormap" v-model="autoColormap" type="checkbox" />
-            <label for="auto_colormap">auto</label>
+          <div
+            class="column py-2 is-flex is-align-items-center is-justify-content-space-between"
+          >
+            <div class="is-flex is-align-items-center">
+              <input
+                id="invert_colormap"
+                v-model="invertColormap"
+                type="checkbox"
+              />
+              <label for="invert_colormap" class="mr-3">invert</label>
+              <div class="select is-small">
+                <select v-model="colormap">
+                  <option v-for="cm in modelInfo.colormaps" :key="cm" :value="cm">
+                    {{ cm }}
+                  </option>
+                </select>
+              </div>
+            </div>
+            <div class="is-flex is-align-items-center">
+              <input id="auto_colormap" v-model="autoColormap" type="checkbox" />
+              <label
+                for="auto_colormap"
+                title="When enabled, changing variable applies that variable's default colormap (and inversion if provided). When disabled, your current colormap settings are kept."
+                >auto select</label
+              >
+            </div>
           </div>
         </div>
       </div>
@@ -786,11 +1050,53 @@ if (paramTimeIndex.value) {
   border-radius: bulmaUt.$radius;
 }
 
+.hcolormap-wrap {
+  position: relative;
+  height: 2.5em;
+}
+
+.hcolormap-muted {
+  position: absolute;
+  inset: 0;
+  border-radius: bulmaUt.$radius;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.hcolormap-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  border-radius: bulmaUt.$radius;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+  cursor: grab;
+}
+
+.hcolormap-window:active {
+  cursor: grabbing;
+}
+
+.cmap-end-label {
+  position: absolute;
+  bottom: 2.62em;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.68rem;
+  line-height: 1.1;
+  padding: 0.08rem 0.28rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.18);
+  color: #222;
+  white-space: nowrap;
+}
+
 .user-range-column {
   width: 100%;
 }
 
 .distribution-plot-wrap {
+  position: relative;
   height: 2.1rem;
   border-radius: bulmaUt.$radius;
   border: 1px solid rgba(0, 0, 0, 0.12);
@@ -815,9 +1121,71 @@ if (paramTimeIndex.value) {
   stroke-width: 1.2;
 }
 
+.hist-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.hist-marker::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.hist-marker-label {
+  position: absolute;
+  top: 0.08rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  line-height: 1;
+  padding: 0.04rem 0.2rem;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.72);
+  color: rgba(0, 0, 0, 0.75);
+  white-space: nowrap;
+}
+
 .slider-stack {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+.unit-toggle {
+  padding: 0 !important;
+  height: 1.9rem;
+  vertical-align: baseline;
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  background: #d9d9d9;
+}
+
+.unit-segment {
+  min-width: 2rem;
+  flex: 1 1 50%;
+  text-align: center;
+  padding: 0 0.45rem;
+  background: #d9d9d9;
+  color: #2f2f2f;
+  line-height: 1.75rem;
+}
+
+.unit-segment + .unit-segment {
+  border-left: 1px solid bulmaUt.$border;
+}
+
+.unit-segment.active {
+  background: #ffffff;
+  color: #1f1f1f;
 }
 </style>

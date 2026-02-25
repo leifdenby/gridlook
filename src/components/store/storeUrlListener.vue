@@ -13,6 +13,7 @@ const {
   timeIndexSlider,
   colormap,
   invertColormap,
+  temperatureUnitCelsius,
 } = storeToRefs(store);
 
 const urlParameterStore = useUrlParameterStore();
@@ -50,17 +51,30 @@ function changeURLHash(
 }
 
 function handleUserBounds() {
+  const lowIsUnset = userBoundsLow.value === undefined;
+  const highIsUnset = userBoundsHigh.value === undefined;
+  const bothUnset = lowIsUnset && highIsUnset;
+  const bothEmptyStrings =
+    (userBoundsLow.value as unknown as string) === "" &&
+    (userBoundsHigh.value as unknown as string) === "";
+  const bothDefined =
+    !lowIsUnset &&
+    !highIsUnset &&
+    (userBoundsLow.value as unknown as string) !== "" &&
+    (userBoundsHigh.value as unknown as string) !== "";
+
   if (
-    (userBoundsLow.value !== undefined &&
-      (userBoundsLow.value as unknown as string) !== "" &&
-      userBoundsHigh.value !== undefined &&
-      (userBoundsHigh.value as unknown as string) !== "") ||
-    ((userBoundsLow.value as unknown as string) === "" &&
-      (userBoundsHigh.value as unknown as string) === "")
+    bothDefined ||
+    bothEmptyStrings ||
+    bothUnset
   ) {
     changeURLHash({
-      [URL_PARAMETERS.USER_BOUNDS_LOW]: userBoundsLow.value as number,
-      [URL_PARAMETERS.USER_BOUNDS_HIGH]: userBoundsHigh.value as number,
+      [URL_PARAMETERS.USER_BOUNDS_LOW]: bothDefined
+        ? (userBoundsLow.value as number)
+        : undefined,
+      [URL_PARAMETERS.USER_BOUNDS_HIGH]: bothDefined
+        ? (userBoundsHigh.value as number)
+        : undefined,
     });
   }
 }
@@ -117,6 +131,15 @@ watch(
   () => {
     changeURLHash({
       [URL_PARAMETERS.MASK_USE_TEXTURE]: String(store.landSeaMaskUseTexture),
+    });
+  }
+);
+
+watch(
+  () => temperatureUnitCelsius.value,
+  () => {
+    changeURLHash({
+      [URL_PARAMETERS.TEMP_UNIT]: temperatureUnitCelsius.value ? "c" : "k",
     });
   }
 );
