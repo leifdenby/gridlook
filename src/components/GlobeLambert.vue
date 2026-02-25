@@ -109,7 +109,8 @@ const hoverInfo = ref<
 >(null);
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
-const ENABLE_HOVER_TOOLTIP = false;
+const unitSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1.0);
+const ENABLE_HOVER_TOOLTIP = true;
 const hoverDelayMs = 300;
 const hoverTimeoutId = ref<number | null>(null);
 const isPointerDown = ref(false);
@@ -650,13 +651,13 @@ function handleMouseMove(event: MouseEvent) {
     return;
   }
   const sample = sampleHoverAt(event);
+  hoverScalarValue.value = sample?.value;
 
   if (hoverTimeoutId.value !== null) {
     clearTimeout(hoverTimeoutId.value);
   }
   hoverTimeoutId.value = window.setTimeout(() => {
     hoverInfo.value = ENABLE_HOVER_TOOLTIP ? sample : null;
-    hoverScalarValue.value = sample?.value;
     hoverTimeoutId.value = null;
   }, hoverDelayMs);
 }
@@ -709,15 +710,27 @@ function sampleHoverAt(event: MouseEvent):
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const intersects = raycaster.intersectObject(mainMesh, true);
-  if (!intersects.length) {
+  const hit = new THREE.Vector3();
+  if (!raycaster.ray.intersectSphere(unitSphere, hit)) {
     return null;
   }
-  const point = intersects[0].point;
+  const point = hit.normalize();
   const { lat, lon } = cartesianToLatLon(point.x, point.y, point.z);
   const { params, x, y } = lambertAxes.value;
   try {
     const projected = lambertLatLonToXY(lat, lon, params);
+    const minX = Math.min(x[0], x[x.length - 1]);
+    const maxX = Math.max(x[0], x[x.length - 1]);
+    const minY = Math.min(y[0], y[y.length - 1]);
+    const maxY = Math.max(y[0], y[y.length - 1]);
+    if (
+      projected.x < minX ||
+      projected.x > maxX ||
+      projected.y < minY ||
+      projected.y > maxY
+    ) {
+      return null;
+    }
     const xIdx = findNearestIndex(x, projected.x);
     const yIdx = findNearestIndex(y, projected.y);
     const cols = gridShape.value.cols;

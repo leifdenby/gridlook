@@ -33,6 +33,38 @@ export function sampleColormapColor(
   return `rgb(${r}, ${g}, ${b})`;
 }
 
+export function estimateNormalizedValueFromRgb(
+  renderer: THREE.WebGLRenderer | undefined,
+  colormap: TColorMap,
+  r: number,
+  g: number,
+  b: number
+) {
+  if (!renderer) {
+    return undefined;
+  }
+  let entry = samplerCache.get(colormap);
+  if (!entry) {
+    entry = { pixels: renderColormapGradient(renderer, colormap) };
+    samplerCache.set(colormap, entry);
+  }
+
+  let bestIdx = 0;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < 256; i += 1) {
+    const offset = i * 4;
+    const dr = entry.pixels[offset] - r;
+    const dg = entry.pixels[offset + 1] - g;
+    const db = entry.pixels[offset + 2] - b;
+    const dist = dr * dr + dg * dg + db * db;
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = i;
+    }
+  }
+  return bestIdx / 255;
+}
+
 function renderColormapGradient(
   renderer: THREE.WebGLRenderer,
   colormap: TColorMap

@@ -53,6 +53,7 @@ const menuCollapsed: Ref<boolean> = ref(false);
 const mobileMenuCollapsed: Ref<boolean> = ref(true);
 const isMobileView: Ref<boolean> = ref(false);
 const autoColormap: Ref<boolean> = ref(true);
+const ENABLE_CMAP_HOVER_MARKER = true;
 const defaultBounds: Ref<TBounds> = ref({});
 const pickedBounds: Ref<TBoundModes> = ref(BOUND_MODES.AUTO);
 const colorbarWrap: Ref<HTMLDivElement | undefined> = ref(undefined);
@@ -893,7 +894,7 @@ if (paramTimeIndex.value) {
             <div ref="colorbarWrap" class="hcolormap-wrap">
               <div class="hcolormap-muted" />
               <div
-                v-if="hoverMarkerPct !== undefined"
+                v-if="ENABLE_CMAP_HOVER_MARKER && hoverMarkerPct !== undefined"
                 class="cmap-hover-marker"
                 :style="{ left: `${hoverMarkerPct}%` }"
               >
