@@ -97,8 +97,23 @@ Build and push an image to GitHub Container Registry (`ghcr.io`):
 gh auth refresh -h github.com -s write:packages,read:packages,repo
 gh auth token | docker login ghcr.io -u "$(gh api user --jq .login)" --password-stdin
 
-docker build -t ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25 .
-docker push ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25
+# Create/use a buildx builder once
+docker buildx create --use --name gridlook-builder || docker buildx use gridlook-builder
+
+# Recommended: publish a multi-platform image (amd64 + arm64)
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25 \
+  --push .
+```
+
+If you only target amd64 (for example most EC2 instances), use:
+
+```sh
+docker buildx build \
+  --platform linux/amd64 \
+  -t ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25 \
+  --push .
 ```
 
 If push fails with:

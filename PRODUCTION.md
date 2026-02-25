@@ -31,6 +31,18 @@ The app reads runtime defaults from container environment variables:
 
 These are written into `runtime-config.js` when the app container starts.
 
+Before deployment, ensure the image tag in `GRIDLOOK_APP_IMAGE` exists in GHCR
+and includes an amd64 variant (or a multi-platform manifest including amd64).
+Recommended publish command:
+
+```sh
+docker buildx create --use --name gridlook-builder || docker buildx use gridlook-builder
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25 \
+  --push .
+```
+
 Example `.env.prod`:
 
 ```sh
