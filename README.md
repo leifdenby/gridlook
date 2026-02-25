@@ -53,13 +53,15 @@ The project is served at http://localhost:3000/ when you run `npm run dev`.
 Default dataset path can be configured via env var:
 
 ```sh
-VITE_DEFAULT_DATASET_PATH=static/index_mr_dpp0066.json
-VITE_DEFAULT_VARIABLE_NAME=
+GRIDLOOK_DEFAULT_DATASET_PATH=static/index_mr_dpp0066.json
+GRIDLOOK_DEFAULT_VARIABLE_NAME=
 ```
 
-`VITE_DEFAULT_VARIABLE_NAME` is optional and only used if that variable exists
+`GRIDLOOK_DEFAULT_VARIABLE_NAME` is optional and only used if that variable exists
 in the currently loaded dataset. Copy `.env.example` to `.env.local` and adjust
-the values.
+the values for local development.
+
+For containerized production runtime configuration, see `DEVELOPING.md`.
 
 ## CORS & Hosting Notes
 
