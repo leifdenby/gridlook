@@ -130,6 +130,27 @@ sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 docker compose version
 ```
 
+If you see `compose build requires buildx 0.17.0 or later`, install/update
+Buildx manually:
+
+```sh
+docker buildx version || true
+
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) BIN=buildx-v0.21.2.linux-amd64 ;;
+  aarch64|arm64) BIN=buildx-v0.21.2.linux-arm64 ;;
+  *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+esac
+
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -SL "https://github.com/docker/buildx/releases/download/v0.21.2/${BIN}" \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+
+docker buildx version
+```
+
 ### 3. Configure AWS networking
 
 In the EC2 security group, allow inbound:
