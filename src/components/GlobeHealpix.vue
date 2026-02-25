@@ -19,6 +19,7 @@ import { useLog } from "./utils/logging";
 import { useSharedGlobeLogic } from "./sharedGlobe.ts";
 import { findCRSVar, getDataSourceStore } from "./utils/zarrUtils.ts";
 import { computeHistogram, sampleFiniteValues } from "./utils/histogram.ts";
+import { resolvePhysicalVarName } from "./utils/derivedVars.ts";
 
 const props = defineProps<{
   datasources?: TSources;
@@ -45,7 +46,7 @@ const {
   makeSnapshot,
   toggleRotate,
   resetDataVars,
-  getDataVar,
+  getVariableSliceAtTime,
   getTimeVar,
   updateLandSeaMask,
 } = useSharedGlobeLogic(canvas, box);
@@ -161,10 +162,14 @@ async function fetchGrid() {
 }
 
 async function getNside() {
+  const physicalVarname = resolvePhysicalVarName(
+    props.datasources!,
+    varnameSelector.value
+  );
   const root = getDataSourceStore(props.datasources!, varnameSelector.value);
 
   const resolveRoot = root.resolve(
-    await findCRSVar(root, varnameSelector.value)
+    await findCRSVar(root, physicalVarname)
   );
   const crs = await zarr.open(resolveRoot, {
     kind: "array",
@@ -193,10 +198,9 @@ async function getCells() {
   }
 }
 
-async function getHealpixData(
-  datavar: zarr.Array<zarr.DataType>,
+async function getHealpixDataFromSlice(
+  dataAtTime: Float32Array,
   cellCoord: number[] | undefined, // Optional - undefined for global data
-  timeValue: number,
   ipix: number,
   numChunks: number,
   nside: number
@@ -206,14 +210,11 @@ async function getHealpixData(
   const pixelEnd = (ipix + 1) * chunksize;
 
   const dataSlice = new Float32Array(chunksize);
+  dataSlice.fill(Number.NaN);
 
   // Global data case: cellCoord is undefined
   if (cellCoord === undefined) {
-    // Fetch data directly for this chunk
-    const data = (
-      await zarr.get(datavar, [timeValue, zarr.slice(pixelStart, pixelEnd)])
-    ).data as Float32Array;
-
+    const data = dataAtTime.subarray(pixelStart, pixelEnd);
     dataSlice.set(data);
   } else {
     // Limited-area data case: need to map cellCoord to global positions
@@ -236,27 +237,9 @@ async function getHealpixData(
       return undefined;
     }
 
-    // Check if indices are contiguous for optimization
-    const start = relevantIndices[0];
-    const end = relevantIndices[relevantIndices.length - 1] + 1;
-    const data = (await zarr.get(datavar, [timeValue, zarr.slice(start, end)]))
-      .data as Float32Array;
-    const isContiguous =
-      relevantIndices.length > 1 &&
-      relevantIndices[relevantIndices.length - 1] - relevantIndices[0] ===
-        relevantIndices.length - 1;
-
-    if (isContiguous) {
-      // Contiguous: use slice for efficient fetching
-      for (let i = 0; i < relevantIndices.length; i++) {
-        dataSlice[localPositions[i]] = data[i];
-      }
-    } else {
-      // Non-contiguous: fetch the entire range and skip what we don't need
-      for (let i = 0; i < relevantIndices.length; i++) {
-        const dataIdx = relevantIndices[i] - start;
-        dataSlice[localPositions[i]] = data[dataIdx];
-      }
+    for (let i = 0; i < relevantIndices.length; i++) {
+      const sourceIdx = relevantIndices[i];
+      dataSlice[localPositions[i]] = dataAtTime[sourceIdx];
     }
   }
 
@@ -409,13 +392,16 @@ async function getData() {
     updatingData.value = true;
     const localVarname = varnameSelector.value;
     const currentTimeIndexSliderValue = timeIndexSlider.value;
-    const [timevar, datavar] = await loadTimeAndDataVars(localVarname);
+    const [timevar, varSlice] = await loadTimeAndDataVars(
+      localVarname,
+      currentTimeIndexSliderValue
+    );
     const timeinfo = await extractTimeInfo(
       timevar,
       currentTimeIndexSliderValue
     );
-    if (datavar !== undefined) {
-      await processDataVar(datavar, currentTimeIndexSliderValue, timeinfo);
+    if (varSlice !== undefined) {
+      await processDataVar(varSlice, timeinfo);
     }
     updatingData.value = false;
 
@@ -430,10 +416,10 @@ async function getData() {
   }
 }
 
-async function loadTimeAndDataVars(varname: string) {
+async function loadTimeAndDataVars(varname: string, timeIndex: number) {
   return await Promise.all([
     getTimeVar(props.datasources!),
-    getDataVar(varname, props.datasources!),
+    getVariableSliceAtTime(varname, props.datasources!, timeIndex),
   ]);
 }
 
@@ -450,68 +436,66 @@ async function extractTimeInfo(
 }
 
 async function processDataVar(
-  datavar: zarr.Array<zarr.DataType, zarr.FetchStore>,
-  currentTimeIndexSliderValue: number,
+  varSlice: {
+    data: ArrayLike<number>;
+    attrs: zarr.Attributes;
+    timeLength: number;
+  },
   timeinfo: Awaited<ReturnType<typeof extractTimeInfo>>
 ) {
-  if (datavar !== undefined) {
-    let dataMin = Number.POSITIVE_INFINITY;
-    let dataMax = Number.NEGATIVE_INFINITY;
-    const sampledValues: number[] = [];
-    const cellCoord = await getCells();
-    const nside = await getNside();
-    if (!gridInfoLogged) {
-      gridInfoLogged = true;
-      console.info("[GlobeHealpix] grid info", {
-        nside,
-        limitedArea: cellCoord !== undefined,
-        cellCount: cellCoord?.length,
-        chunks: HEALPIX_NUMCHUNKS,
-      });
-    }
-    await Promise.all(
-      [...Array(HEALPIX_NUMCHUNKS).keys()].map(async (ipix) => {
-        const texData = await getHealpixData(
-          datavar,
-          cellCoord,
-          currentTimeIndexSliderValue,
-          ipix,
-          HEALPIX_NUMCHUNKS,
-          nside
-        );
-        if (texData === undefined) {
-          const material = mainMeshes[ipix].material as THREE.ShaderMaterial;
-          material.uniforms.data.value.dispose();
-          return;
-        }
-
-        // Update global data range
-        dataMin = Math.min(dataMin, texData.min);
-        dataMax = Math.max(dataMax, texData.max);
-        sampledValues.push(...texData.samples);
-
-        const material = mainMeshes[ipix].material as THREE.ShaderMaterial;
-        material.uniforms.data.value.dispose();
-        material.uniforms.data.value = texData.texture;
-
-        // Optional: trigger a render here if using manual render loop
-        redraw();
-        // If your render loop is auto-updating (via requestAnimationFrame), you may skip redraw()
-      })
-    );
-
-    store.updateVarInfo({
-      attrs: datavar.attrs,
-      timeinfo,
-      timeRange: { start: 0, end: datavar.shape[0] - 1 },
-      bounds: { low: dataMin, high: dataMax },
-      histogram: {
-        low: dataMin,
-        high: dataMax,
-        bins: computeHistogram(sampledValues, dataMin, dataMax),
-      },
+  let dataMin = Number.POSITIVE_INFINITY;
+  let dataMax = Number.NEGATIVE_INFINITY;
+  const sampledValues: number[] = [];
+  const cellCoord = await getCells();
+  const nside = await getNside();
+  if (!gridInfoLogged) {
+    gridInfoLogged = true;
+    console.info("[GlobeHealpix] grid info", {
+      nside,
+      limitedArea: cellCoord !== undefined,
+      cellCount: cellCoord?.length,
+      chunks: HEALPIX_NUMCHUNKS,
     });
   }
+  const dataAtTime = Float32Array.from(varSlice.data);
+  await Promise.all(
+    [...Array(HEALPIX_NUMCHUNKS).keys()].map(async (ipix) => {
+      const texData = await getHealpixDataFromSlice(
+        dataAtTime,
+        cellCoord,
+        ipix,
+        HEALPIX_NUMCHUNKS,
+        nside
+      );
+      if (texData === undefined) {
+        const material = mainMeshes[ipix].material as THREE.ShaderMaterial;
+        material.uniforms.data.value.dispose();
+        return;
+      }
+
+      dataMin = Math.min(dataMin, texData.min);
+      dataMax = Math.max(dataMax, texData.max);
+      sampledValues.push(...texData.samples);
+
+      const material = mainMeshes[ipix].material as THREE.ShaderMaterial;
+      material.uniforms.data.value.dispose();
+      material.uniforms.data.value = texData.texture;
+
+      redraw();
+    })
+  );
+
+  store.updateVarInfo({
+    attrs: varSlice.attrs,
+    timeinfo,
+    timeRange: { start: 0, end: varSlice.timeLength - 1 },
+    bounds: { low: dataMin, high: dataMax },
+    histogram: {
+      low: dataMin,
+      high: dataMax,
+      bins: computeHistogram(sampledValues, dataMin, dataMax),
+    },
+  });
 }
 
 function copyPythonExample() {

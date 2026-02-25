@@ -61,7 +61,7 @@ const {
   redraw,
   makeSnapshot,
   toggleRotate,
-  getDataVar,
+  getVariableSliceAtTime,
   getTimeVar,
   updateLandSeaMask,
 } = useSharedGlobeLogic(canvas, box);
@@ -189,9 +189,13 @@ async function getData() {
 
     const localVarname = varnameSelector.value;
     const currentTimeIndexSliderValue = timeIndexSlider.value;
-    const [timevar, datavar] = await Promise.all([
+    const [timevar, varSlice] = await Promise.all([
       getTimeVar(props.datasources!),
-      getDataVar(localVarname, props.datasources!),
+      getVariableSliceAtTime(
+        localVarname,
+        props.datasources!,
+        currentTimeIndexSliderValue
+      ),
     ]);
     let timeinfo = {};
     if (timevar !== undefined) {
@@ -206,26 +210,26 @@ async function getData() {
         ),
       };
     }
-    if (datavar !== undefined) {
-      const rawData = await zarr.get(datavar, [
-        currentTimeIndexSliderValue,
-        null,
-      ]);
-      const dataBuffer = data2valueBuffer(rawData);
+    if (varSlice !== undefined) {
+      const rawData = Float32Array.from(varSlice.data as ArrayLike<number>);
+      const dataBuffer = data2valueBuffer({
+        shape: [rawData.length],
+        data: rawData,
+      } as zarr.Chunk<zarr.DataType>);
       mainMesh?.geometry.setAttribute(
         "data_value",
         new THREE.BufferAttribute(dataBuffer.dataValues, 1)
       );
       store.updateVarInfo({
-        attrs: datavar.attrs,
+        attrs: varSlice.attrs,
         timeinfo,
-        timeRange: { start: 0, end: datavar.shape[0] - 1 },
+        timeRange: { start: 0, end: varSlice.timeLength - 1 },
         bounds: { low: dataBuffer.dataMin, high: dataBuffer.dataMax },
         histogram: {
           low: dataBuffer.dataMin,
           high: dataBuffer.dataMax,
           bins: computeHistogram(
-            rawData.data as ArrayLike<number>,
+            rawData as ArrayLike<number>,
             dataBuffer.dataMin,
             dataBuffer.dataMax
           ),

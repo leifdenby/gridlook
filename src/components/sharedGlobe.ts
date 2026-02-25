@@ -19,6 +19,7 @@ import type { TSources } from "@/types/GlobeTypes.ts";
 import { useUrlParameterStore } from "./store/paramStore.ts";
 import { getLandSeaMask, loadJSON } from "./utils/landSeaMask.ts";
 import debounce from "lodash.debounce";
+import { isWindSpeedDerived } from "./utils/derivedVars.ts";
 
 // Drag mode switch:
 // - true: keep picked Earth surface point under cursor while dragging
@@ -401,31 +402,131 @@ export function useSharedGlobeLogic(
   }
 
   async function getDataVar(myVarname: string, datasources: TSources) {
-    if (!datavars.value[myVarname]) {
+    const isDerivedWind = isWindSpeedDerived(datasources, myVarname);
+    const cacheKey = myVarname;
+    if (!datavars.value[cacheKey]) {
       let myDatasource;
+      let sourceVarname = myVarname;
       if (myVarname === "time") {
-        myDatasource = datasources!.levels[0].time;
+        myDatasource = datasources.levels[0].time;
+      } else if (isDerivedWind) {
+        const derived = datasources.levels[0].datasources[myVarname].derived!;
+        sourceVarname = derived.components.eastward;
+        myDatasource = datasources.levels[0].datasources[sourceVarname];
       } else {
-        myDatasource = datasources!.levels[0].datasources[myVarname];
+        myDatasource = datasources.levels[0].datasources[myVarname];
       }
       try {
         const root = zarr.root(new zarr.FetchStore(myDatasource.store));
         const datavar = await zarr.open(
-          root.resolve(myDatasource.dataset + "/" + myVarname),
+          root.resolve(myDatasource.dataset + "/" + sourceVarname),
           {
             kind: "array",
           }
         );
-        datavars.value[myVarname] = datavar;
+        datavars.value[cacheKey] = datavar;
       } catch (error) {
         logError(
           error,
-          `Couldn't fetch variable ${myVarname} from store: ${myDatasource.store} and dataset: ${myDatasource.dataset}`
+          `Couldn't fetch variable ${sourceVarname} from store: ${myDatasource.store} and dataset: ${myDatasource.dataset}`
         );
         return undefined;
       }
     }
-    return datavars.value[myVarname];
+    return datavars.value[cacheKey];
+  }
+
+  async function getVariableSliceAtTime(
+    myVarname: string,
+    datasources: TSources,
+    timeIndex: number
+  ): Promise<
+    | {
+        data: ArrayLike<number>;
+        attrs: zarr.Attributes;
+        timeLength: number;
+      }
+    | undefined
+  > {
+    if (!isWindSpeedDerived(datasources, myVarname)) {
+      const datavar = await getDataVar(myVarname, datasources);
+      if (!datavar) return undefined;
+      const rawData = await zarr.get(datavar, [
+        timeIndex,
+        ...Array(datavar.shape.length - 1).fill(null),
+      ]);
+      return {
+        data: rawData.data as ArrayLike<number>,
+        attrs: datavar.attrs ?? {},
+        timeLength: datavar.shape[0],
+      };
+    }
+
+    const datasource = datasources.levels[0].datasources[myVarname];
+    const components = datasource.derived!.components;
+    const [eastVar, northVar] = await Promise.all([
+      getDataVar(components.eastward, datasources),
+      getDataVar(components.northward, datasources),
+    ]);
+    if (!eastVar || !northVar) return undefined;
+
+    const [eastData, northData] = await Promise.all([
+      zarr.get(eastVar, [timeIndex, ...Array(eastVar.shape.length - 1).fill(null)]),
+      zarr.get(northVar, [
+        timeIndex,
+        ...Array(northVar.shape.length - 1).fill(null),
+      ]),
+    ]);
+
+    const east = eastData.data as ArrayLike<number>;
+    const north = northData.data as ArrayLike<number>;
+    const out = new Float32Array(Math.min(east.length, north.length));
+
+    const eastFill = new Set(
+      [eastVar.attrs?._FillValue, eastVar.attrs?.missing_value]
+        .flat()
+        .map((v) => Number(v))
+        .filter((v) => Number.isFinite(v))
+    );
+    const northFill = new Set(
+      [northVar.attrs?._FillValue, northVar.attrs?.missing_value]
+        .flat()
+        .map((v) => Number(v))
+        .filter((v) => Number.isFinite(v))
+    );
+
+    for (let i = 0; i < out.length; i++) {
+      const u = Number(east[i]);
+      const v = Number(north[i]);
+      if (
+        Number.isNaN(u) ||
+        Number.isNaN(v) ||
+        eastFill.has(u) ||
+        northFill.has(v)
+      ) {
+        out[i] = Number.NaN;
+      } else {
+        out[i] = Math.hypot(u, v);
+      }
+    }
+
+    const eastUnits = eastVar.attrs?.units;
+    const northUnits = northVar.attrs?.units;
+    const units =
+      typeof eastUnits === "string" && eastUnits === northUnits
+        ? eastUnits
+        : undefined;
+
+    return {
+      data: out,
+      attrs: {
+        ...eastVar.attrs,
+        ...(units ? { units } : {}),
+        standard_name: "wind_speed",
+        long_name: `wind speed (${components.eastward} ${components.northward})`,
+      },
+      timeLength: eastVar.shape[0],
+    };
   }
 
   async function getTimeVar(datasources: TSources) {
@@ -533,6 +634,7 @@ export function useSharedGlobeLogic(
     makeSnapshot,
     resetDataVars,
     getDataVar,
+    getVariableSliceAtTime,
     getTimeVar,
     registerUpdateLOD,
     updateLandSeaMask,

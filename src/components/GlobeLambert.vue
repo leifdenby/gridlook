@@ -69,6 +69,7 @@ const {
   toggleRotate,
   resetDataVars,
   getDataVar,
+  getVariableSliceAtTime,
   getTimeVar,
   updateLandSeaMask,
 } = useSharedGlobeLogic(canvas, box);
@@ -430,9 +431,13 @@ async function getData() {
     }
     const localVarname = varnameSelector.value;
     const currentTimeIndexSliderValue = timeIndexSlider.value;
-    const [timevar, datavar] = await Promise.all([
+    const [timevar, varSlice] = await Promise.all([
       getTimeVar(props.datasources!),
-      getDataVar(localVarname, props.datasources!),
+      getVariableSliceAtTime(
+        localVarname,
+        props.datasources!,
+        currentTimeIndexSliderValue
+      ),
     ]);
 
     let timeinfo = {};
@@ -447,15 +452,11 @@ async function getData() {
         ),
       };
     }
-    if (datavar !== undefined && gridShape.value) {
-      const rawData = await zarr.get(datavar, [
-        currentTimeIndexSliderValue,
-        ...Array(datavar.shape.length - 1).fill(null),
-      ]);
+    if (varSlice !== undefined && gridShape.value) {
       const baseArray =
-        rawData.data instanceof Float64Array
-          ? (rawData.data as Float64Array)
-          : Float64Array.from(rawData.data as ArrayLike<number>);
+        varSlice.data instanceof Float64Array
+          ? (varSlice.data as Float64Array)
+          : Float64Array.from(varSlice.data as ArrayLike<number>);
       const orderedData = orientLambertData(
         baseArray,
         gridShape.value.rows,
@@ -463,8 +464,8 @@ async function getData() {
         lambertAxisOrder.value === "yx"
       );
       const fillCandidates = [
-        datavar.attrs?._FillValue,
-        datavar.attrs?.missing_value,
+        varSlice.attrs?._FillValue,
+        varSlice.attrs?.missing_value,
       ].flat();
       const fillValues = new Set(
         fillCandidates
@@ -504,8 +505,8 @@ async function getData() {
         THREE.UVMapping
       );
       currentField.value = textureData;
-      currentUnits.value = datavar.attrs?.units
-        ? String(datavar.attrs.units)
+      currentUnits.value = varSlice.attrs?.units
+        ? String(varSlice.attrs.units)
         : undefined;
       colormapRange.value = { low: lowBound, high: highBound };
       texture.needsUpdate = true;
@@ -525,9 +526,9 @@ async function getData() {
       mainMesh!.material.needsUpdate = true;
 
       store.updateVarInfo({
-        attrs: datavar.attrs,
+        attrs: varSlice.attrs,
         timeinfo,
-        timeRange: { start: 0, end: datavar.shape[0] - 1 },
+        timeRange: { start: 0, end: varSlice.timeLength - 1 },
         bounds: { low: min, high: max },
         histogram: {
           low: min,

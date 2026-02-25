@@ -23,6 +23,13 @@ export type TVarInfo = {
 export type TDataSource = {
   store: string;
   dataset: string;
+  derived?: {
+    kind: "wind_speed";
+    components: {
+      eastward: string;
+      northward: string;
+    };
+  };
   default_colormap?: {
     name: TColorMap;
     inverted: boolean;

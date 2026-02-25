@@ -23,6 +23,10 @@ import {
   lambertParamsFromAttributes,
 } from "@/components/utils/cfProjection";
 import { DEFAULT_VARIABLE_NAME } from "../config/appConfig";
+import {
+  resolvePhysicalVarName,
+  withDerivedVariables,
+} from "@/components/utils/derivedVars";
 
 const props = defineProps<{ src: string }>();
 
@@ -207,7 +211,7 @@ const updateSrc = async () => {
     if (index.status === "fulfilled") {
       sourceValid.value = true;
       if (src === props.src) {
-        datasources.value = index.value;
+        datasources.value = withDerivedVariables(index.value);
       }
       const availableVars = Object.keys(modelInfo.value!.vars);
       const configuredDefaultVar =
@@ -309,10 +313,14 @@ async function getGridType() {
       /* empty */
     }
 
+    const physicalVarname = resolvePhysicalVarName(
+      datasources.value!,
+      varnameSelector.value
+    );
     const root = getDataSourceStore(datasources.value!, varnameSelector.value);
     console.info("[Gridlook] Data root resolved");
 
-    const datavar = await zarr.open(root.resolve(varnameSelector.value), {
+    const datavar = await zarr.open(root.resolve(physicalVarname), {
       kind: "array",
     });
     console.info("[Gridlook] Data variable opened", {
@@ -323,7 +331,7 @@ async function getGridType() {
     let crs: zarr.Array<zarr.DataType, zarr.FetchStore> | undefined;
     try {
       crs = await zarr.open(
-        root.resolve(await findCRSVar(root, varnameSelector.value)),
+        root.resolve(await findCRSVar(root, physicalVarname)),
         {
           kind: "array",
         }

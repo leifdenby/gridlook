@@ -47,7 +47,7 @@ const {
   makeSnapshot,
   toggleRotate,
   resetDataVars,
-  getDataVar,
+  getVariableSliceAtTime,
   getTimeVar,
   updateLandSeaMask,
 } = useSharedGlobeLogic(canvas, box);
@@ -386,7 +386,7 @@ async function makeGeometry() {
 }
 
 async function getRegularData(
-  arr: Float64Array,
+  arr: Float32Array | Float64Array,
   latCount: number,
   lonCount: number
 ) {
@@ -429,9 +429,13 @@ async function getData() {
 
     const localVarname = varnameSelector.value;
     const currentTimeIndexSliderValue = timeIndexSlider.value;
-    const [timevar, datavar] = await Promise.all([
+    const [timevar, varSlice] = await Promise.all([
       getTimeVar(props.datasources!),
-      getDataVar(localVarname, props.datasources!),
+      getVariableSliceAtTime(
+        localVarname,
+        props.datasources!,
+        currentTimeIndexSliderValue
+      ),
     ]);
 
     let timeinfo = {};
@@ -446,14 +450,11 @@ async function getData() {
         ),
       };
     }
-    if (datavar !== undefined) {
-      const rawData = await zarr.get(datavar, [
-        currentTimeIndexSliderValue,
-        ...Array(datavar.shape.length - 1).fill(null),
-      ]);
+    if (varSlice !== undefined) {
+      const rawData = Float32Array.from(varSlice.data as ArrayLike<number>);
       let min = Number.POSITIVE_INFINITY;
       let max = Number.NEGATIVE_INFINITY;
-      for (let i of rawData.data as Float64Array) {
+      for (let i of rawData) {
         if (isNaN(i)) {
           continue;
         }
@@ -461,7 +462,7 @@ async function getData() {
         max = Math.max(max, i);
       }
       const textures = await getRegularData(
-        rawData.data as Float64Array,
+        rawData,
         latitudes.value.length,
         longitudes.value.length
       );
@@ -484,14 +485,14 @@ async function getData() {
       mainMesh!.material.needsUpdate = true;
 
       store.updateVarInfo({
-        attrs: datavar.attrs,
+        attrs: varSlice.attrs,
         timeinfo,
-        timeRange: { start: 0, end: datavar.shape[0] - 1 },
+        timeRange: { start: 0, end: varSlice.timeLength - 1 },
         bounds: { low: min, high: max },
         histogram: {
           low: min,
           high: max,
-          bins: computeHistogram(rawData.data as ArrayLike<number>, min, max),
+          bins: computeHistogram(rawData as ArrayLike<number>, min, max),
         },
       });
       redraw();

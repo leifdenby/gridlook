@@ -64,7 +64,7 @@ const {
   redraw,
   makeSnapshot,
   toggleRotate,
-  getDataVar,
+  getVariableSliceAtTime,
   getTimeVar,
   registerUpdateLOD,
   updateLandSeaMask,
@@ -319,9 +319,13 @@ async function getData() {
     updatingData.value = true;
     const localVarname = varnameSelector.value;
     const currentTimeIndexSliderValue = timeIndexSlider.value;
-    const [timevar, datavar] = await Promise.all([
+    const [timevar, varSlice] = await Promise.all([
       getTimeVar(props.datasources!),
-      getDataVar(localVarname, props.datasources!),
+      getVariableSliceAtTime(
+        localVarname,
+        props.datasources!,
+        currentTimeIndexSliderValue
+      ),
     ]);
     let timeinfo = {};
     if (timevar !== undefined) {
@@ -336,32 +340,29 @@ async function getData() {
         ),
       };
     }
-    if (datavar !== undefined) {
+    if (varSlice !== undefined) {
       const root = zarr.root(new zarr.FetchStore(gridsource.value!.store));
       const grid = await zarr.open(root.resolve(gridsource.value!.dataset), {
         kind: "group",
       });
-      const rawData = await zarr.get(datavar, [
-        currentTimeIndexSliderValue,
-        ...Array(datavar.shape.length - 1).fill(null),
-      ]);
+      const rawData = Float64Array.from(varSlice.data as ArrayLike<number>);
       let min = Number.POSITIVE_INFINITY;
       let max = Number.NEGATIVE_INFINITY;
-      for (let i of rawData.data as Float64Array) {
+      for (let i of rawData) {
         if (Number.isNaN(i)) continue;
         min = Math.min(min, i);
         max = Math.max(max, i);
       }
-      await getGrid(grid, rawData.data as Float64Array);
+      await getGrid(grid, rawData);
       store.updateVarInfo({
-        attrs: datavar.attrs,
+        attrs: varSlice.attrs,
         timeinfo,
-        timeRange: { start: 0, end: datavar.shape[0] - 1 },
+        timeRange: { start: 0, end: varSlice.timeLength - 1 },
         bounds: { low: min, high: max },
         histogram: {
           low: min,
           high: max,
-          bins: computeHistogram(rawData.data as ArrayLike<number>, min, max),
+          bins: computeHistogram(rawData as ArrayLike<number>, min, max),
         },
       });
     }
