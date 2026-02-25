@@ -40,13 +40,15 @@ services:
       - traefik.http.routers.gridlook-slash.tls=true
       - traefik.http.routers.gridlook-slash.tls.certresolver=letsencrypt
       - traefik.http.routers.gridlook-slash.middlewares=gridlook-add-slash
+      - traefik.http.routers.gridlook-slash.priority=200
       - traefik.http.middlewares.gridlook-add-slash.redirectregex.regex=^https?://([^/]+)/dini$
       - traefik.http.middlewares.gridlook-add-slash.redirectregex.replacement=https://$${1}/dini/
       - traefik.http.middlewares.gridlook-add-slash.redirectregex.permanent=true
-      - traefik.http.routers.gridlook.rule=Host(`dmidev.org`) && (PathPrefix(`/dini`) || Path(`/dini`))
+      - traefik.http.routers.gridlook.rule=Host(`dmidev.org`) && PathPrefix(`/dini/`)
       - traefik.http.routers.gridlook.entrypoints=websecure
       - traefik.http.routers.gridlook.tls=true
       - traefik.http.routers.gridlook.tls.certresolver=letsencrypt
+      - traefik.http.routers.gridlook.priority=100
       - traefik.http.routers.gridlook.service=gridlook
       - traefik.http.services.gridlook.loadbalancer.server.port=80
       - traefik.http.routers.gridlook.middlewares=gridlook-strip-dini
