@@ -58,6 +58,30 @@ services:
       - web
     restart: unless-stopped
 
+  scheduler:
+    image: python:3.12-alpine
+    working_dir: /workspace
+    command:
+      - /bin/sh
+      - -lc
+      - |
+        apk add --no-cache docker-cli docker-cli-compose curl >/dev/null
+        while true; do
+          /workspace/scripts/update_dataset_path.sh || true
+          sleep 3600
+        done
+    environment:
+      BASE_URL: https://harmonie-zarr.s3.amazonaws.com/dini/control
+      ENV_FILE: /workspace/.env.prod
+      COMPOSE_FILE: /workspace/docker-compose.prod.yml
+      MIN_LAG_HOURS: "3"
+      STEP_HOURS: "3"
+      MAX_LOOKBACK_HOURS: "48"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/workspace
+    restart: unless-stopped
+
 volumes:
   letsencrypt:
 
