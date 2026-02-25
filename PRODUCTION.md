@@ -14,8 +14,6 @@ The Compose setup uses label-based Traefik configuration in
 - Strips `/dini` before forwarding traffic to the app container.
 - Redirects all HTTP traffic on port 80 to HTTPS on port 443.
 - Uses Let's Encrypt via ACME HTTP challenge.
-- Runs a `scheduler` sidecar that updates `GRIDLOOK_DEFAULT_DATASET_PATH`
-  hourly and recreates `app`.
 
 ## Prerequisites
 
@@ -32,8 +30,6 @@ The app reads runtime defaults from container environment variables:
 - `GRIDLOOK_DEFAULT_VARIABLE_NAME`
 
 These are written into `runtime-config.js` when the app container starts.
-The scheduler updates `GRIDLOOK_DEFAULT_DATASET_PATH` in `.env.prod` each hour
-to the newest available 3-hour forecast cycle with at least 3 hours lag.
 
 Before deployment, ensure the image tag in `GRIDLOOK_APP_IMAGE` exists in GHCR
 and includes an amd64 variant (or a multi-platform manifest including amd64).
@@ -61,7 +57,7 @@ Pull and start Traefik + app:
 
 ```sh
 docker compose -f docker-compose.prod.yml --env-file .env.prod pull app
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d traefik app scheduler
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d traefik app
 ```
 
 Update runtime config values without rebuilding image:
@@ -84,12 +80,6 @@ Check runtime config rendered in container:
 docker compose -f docker-compose.prod.yml exec app sh -lc 'cat /usr/share/nginx/html/runtime-config.js'
 ```
 
-Check scheduler activity:
-
-```sh
-docker compose -f docker-compose.prod.yml logs --tail=100 scheduler
-```
-
 Test redirect and HTTPS routing:
 
 ```sh
@@ -109,8 +99,6 @@ Expected behavior:
 - Traefik config is fully defined in `docker-compose.prod.yml` labels and
   command args.
 - The production compose file defines which image tag is used (`GRIDLOOK_APP_IMAGE`).
-- Hourly dataset updates are handled by `scripts/update_dataset_path.sh` via the
-  `scheduler` service.
 
 ## Fresh EC2 Setup (Amazon Linux 2023)
 
@@ -212,7 +200,7 @@ EOF
 
 ```sh
 docker compose -f docker-compose.prod.yml --env-file .env.prod pull app
-docker compose -f docker-compose.prod.yml --env-file .env.prod up -d traefik app scheduler
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d traefik app
 ```
 
 ### 8. Verify deployment
