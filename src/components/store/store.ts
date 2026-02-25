@@ -37,6 +37,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
       temperatureUnitCelsius: true,
       userBoundsLow: undefined as number | undefined,
       userBoundsHigh: undefined as number | undefined,
+      hoverScalarValue: undefined as number | undefined,
     };
   },
   actions: {
@@ -45,6 +46,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     startLoading() {
       this.loading = true;
+      this.hoverScalarValue = undefined;
     },
     stopLoading() {
       this.loading = false;
@@ -67,6 +69,9 @@ export const useGlobeControlStore = defineStore("globeControl", {
     },
     updateBounds(bounds: TBounds) {
       this.selection = bounds;
+    },
+    setHoverScalarValue(value: number | undefined) {
+      this.hoverScalarValue = value;
     },
   },
 });

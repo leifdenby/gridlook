@@ -32,6 +32,7 @@ const {
   temperatureUnitCelsius,
   varnameSelector,
   varinfo,
+  hoverScalarValue,
   userBoundsLow,
   userBoundsHigh,
   landSeaMaskChoice,
@@ -125,17 +126,88 @@ function roundToTwo(value: number) {
   return Math.round(value * 100) / 100;
 }
 
-function formatOneSignificant(value: number) {
-  if (!Number.isFinite(value) || value === 0) return "0";
-  const abs = Math.abs(value);
-  const exponent = Math.floor(Math.log10(abs));
-  const factor = 10 ** exponent;
-  const rounded = Math.round(value / factor) * factor;
-  const decimals = Math.max(0, -exponent);
-  return rounded
-    .toFixed(decimals)
-    .replace(/\.0+$/, "")
-    .replace(/(\.\d*?)0+$/, "$1");
+function formatHistogramMarkerLabels(values: number[]) {
+  if (values.length === 0) return [];
+  let decimals = 0;
+  let labels = values.map((value) => value.toFixed(decimals));
+
+  while (new Set(labels).size < values.length && decimals < 12) {
+    decimals += 1;
+    labels = values.map((value) => value.toFixed(decimals));
+  }
+
+  return labels;
+}
+
+function niceStep(rawStep: number) {
+  if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+  const exponent = Math.floor(Math.log10(rawStep));
+  const base = 10 ** exponent;
+  const normalized = rawStep / base;
+  let niceNormalized = 10;
+  if (normalized <= 1) niceNormalized = 1;
+  else if (normalized <= 2) niceNormalized = 2;
+  else if (normalized <= 5) niceNormalized = 5;
+  return niceNormalized * base;
+}
+
+function roundForDisplay(value: number) {
+  return Number(value.toFixed(12));
+}
+
+function generateNiceMarkerValues(low: number, high: number, maxCount: number) {
+  const span = high - low;
+  if (!Number.isFinite(span) || span <= 0 || maxCount <= 0) {
+    return [];
+  }
+  const epsilon = span * 1e-9;
+
+  function markersForStep(step: number) {
+    const values: number[] = [];
+    if (!Number.isFinite(step) || step <= 0) return values;
+    let v = Math.ceil((low + epsilon) / step) * step;
+    for (; v < high - epsilon; v += step) {
+      values.push(roundForDisplay(v));
+      if (values.length > 256) break;
+    }
+    return values;
+  }
+
+  let step = niceStep(span / (maxCount + 1));
+  let values = markersForStep(step);
+  while (values.length < Math.min(2, maxCount) && step > span * 1e-12) {
+    step /= 2;
+    values = markersForStep(step);
+  }
+
+  if (values.length > maxCount) {
+    const sampled: number[] = [];
+    for (let i = 0; i < maxCount; i += 1) {
+      const idx = Math.round((i * (values.length - 1)) / (maxCount - 1));
+      sampled.push(values[idx]);
+    }
+    values = sampled;
+  }
+
+  if (low < 0 && high > 0) {
+    const zeroIdx = values.findIndex((v) => Math.abs(v) < 1e-9);
+    if (zeroIdx === -1 && values.length > 0) {
+      let closestIdx = 0;
+      let closestDist = Math.abs(values[0]);
+      for (let i = 1; i < values.length; i += 1) {
+        const dist = Math.abs(values[i]);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestIdx = i;
+        }
+      }
+      values[closestIdx] = 0;
+    }
+  }
+
+  return values
+    .filter((v, i) => values.findIndex((other) => Math.abs(other - v) < 1e-9) === i)
+    .sort((a, b) => a - b);
 }
 
 const dataBoundsDisplay = computed(() => {
@@ -235,6 +307,21 @@ const selectedSpanPct = computed(() =>
 );
 const userLowLabel = computed(() => Number(userLowBound.value).toFixed(2));
 const userHighLabel = computed(() => Number(userHighBound.value).toFixed(2));
+const hoverMarkerDisplayValue = computed(() => {
+  const value = finiteNumber(hoverScalarValue.value);
+  if (value === undefined) return undefined;
+  return toDisplayValue(value);
+});
+const hoverMarkerPct = computed(() => {
+  const value = finiteNumber(hoverMarkerDisplayValue.value);
+  if (value === undefined) return undefined;
+  return Math.max(0, Math.min(100, normalizeToPercent(value)));
+});
+const hoverMarkerLabel = computed(() => {
+  const value = finiteNumber(hoverMarkerDisplayValue.value);
+  if (value === undefined) return undefined;
+  return value.toFixed(2);
+});
 
 function beginRangeDrag(event: MouseEvent) {
   if (!hasSliderDomain.value || !colorbarWrap.value) return;
@@ -308,33 +395,13 @@ const histogramMarkers = computed(() => {
   if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) {
     return [];
   }
+  const markerValues = generateNiceMarkerValues(low, high, 4);
+  const labels = formatHistogramMarkerLabels(markerValues);
 
-  const spansZero = low <= 0 && high >= 0;
-  const span = high - low;
-  const interiorFractions = [0.2, 0.4, 0.6, 0.8];
-  const values = interiorFractions.map((f) => low + span * f);
-
-  if (spansZero) {
-    let closestIdx = 0;
-    let closestDist = Math.abs(values[0]);
-    for (let i = 1; i < values.length; i += 1) {
-      const dist = Math.abs(values[i]);
-      if (dist < closestDist) {
-        closestDist = dist;
-        closestIdx = i;
-      }
-    }
-    values[closestIdx] = 0;
-  }
-
-  const deduped = values.filter(
-    (v, i) => values.findIndex((other) => Math.abs(other - v) < 1e-9) === i
-  );
-
-  return deduped.slice(0, 4).map((value) => ({
+  return markerValues.map((value, idx) => ({
     value,
     pct: Math.max(0, Math.min(100, normalizeToPercent(value))),
-    label: formatOneSignificant(value),
+    label: labels[idx],
   }));
 });
 
@@ -826,6 +893,13 @@ if (paramTimeIndex.value) {
             <div ref="colorbarWrap" class="hcolormap-wrap">
               <div class="hcolormap-muted" />
               <div
+                v-if="hoverMarkerPct !== undefined"
+                class="cmap-hover-marker"
+                :style="{ left: `${hoverMarkerPct}%` }"
+              >
+                <div class="cmap-hover-marker-label">{{ hoverMarkerLabel }}</div>
+              </div>
+              <div
                 class="hcolormap-window"
                 :style="{
                   left: `${selectedLowPct}%`,
@@ -1074,6 +1148,32 @@ if (paramTimeIndex.value) {
 
 .hcolormap-window:active {
   cursor: grabbing;
+}
+
+.cmap-hover-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-1px);
+  background: #000;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.cmap-hover-marker-label {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0.68rem;
+  line-height: 1.1;
+  padding: 0.08rem 0.28rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  color: #111;
+  white-space: nowrap;
 }
 
 .cmap-end-label {

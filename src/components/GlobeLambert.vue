@@ -55,6 +55,8 @@ const {
   varnameSelector,
   invertColormap,
   selection,
+  temperatureUnitCelsius,
+  hoverScalarValue,
 } = storeToRefs(store);
 
 let canvas: Ref<HTMLCanvasElement | undefined> = ref();
@@ -98,13 +100,16 @@ const hoverInfo = ref<
       x: number;
       y: number;
       value: number;
+      displayValue: number;
       units?: string;
+      displayUnits?: string;
       color?: string;
     }
   | null
 >(null);
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
+const ENABLE_HOVER_TOOLTIP = false;
 const hoverDelayMs = 300;
 const hoverTimeoutId = ref<number | null>(null);
 const isPointerDown = ref(false);
@@ -420,6 +425,7 @@ async function getData() {
   store.startLoading();
   try {
     hoverInfo.value = null;
+    hoverScalarValue.value = undefined;
     updateCount.value += 1;
     const myUpdateCount = updateCount.value;
     if (updatingData.value) {
@@ -588,6 +594,7 @@ onBeforeUnmount(() => {
   canvas.value?.removeEventListener("mouseleave", handleMouseLeave);
   canvas.value?.removeEventListener("pointerdown", handlePointerDown);
   window.removeEventListener("pointerup", handlePointerUp);
+  hoverScalarValue.value = undefined;
 });
 
 function centerCameraOn(
@@ -639,33 +646,64 @@ function orientLambertData(
 function handleMouseMove(event: MouseEvent) {
   if (isPointerDown.value) {
     hoverInfo.value = null;
+    hoverScalarValue.value = undefined;
     return;
   }
+  const sample = sampleHoverAt(event);
+
   if (hoverTimeoutId.value !== null) {
     clearTimeout(hoverTimeoutId.value);
   }
   hoverTimeoutId.value = window.setTimeout(() => {
-    updateHoverInfo(event);
+    hoverInfo.value = ENABLE_HOVER_TOOLTIP ? sample : null;
+    hoverScalarValue.value = sample?.value;
     hoverTimeoutId.value = null;
   }, hoverDelayMs);
 }
 
-function updateHoverInfo(event: MouseEvent) {
+function isKelvinUnit(units: string | undefined) {
+  if (!units) return false;
+  const normalized = units.trim().toLowerCase();
+  return normalized === "k" || normalized === "kelvin";
+}
+
+function formatTwoSignificant(value: number) {
+  if (!Number.isFinite(value) || value === 0) return "0";
+  const abs = Math.abs(value);
+  const exponent = Math.floor(Math.log10(abs));
+  const factor = 10 ** (exponent - 1);
+  const rounded = Math.round(value / factor) * factor;
+  const decimals = Math.max(0, -(exponent - 1));
+  return rounded
+    .toFixed(decimals)
+    .replace(/\.0+$/, "")
+    .replace(/(\.\d*?)0+$/, "$1");
+}
+
+function sampleHoverAt(event: MouseEvent):
+  | {
+      x: number;
+      y: number;
+      value: number;
+      displayValue: number;
+      units?: string;
+      displayUnits?: string;
+      color?: string;
+    }
+  | null {
   if (
     !mainMesh ||
     !gridShape.value ||
     !lambertAxes.value ||
     !currentField.value
   ) {
-    hoverInfo.value = null;
-    return;
+    return null;
   }
   const canvasEl = canvas.value;
   const boxEl = box.value;
   const camera = getCamera();
   if (!canvasEl || !boxEl || !camera) {
-    hoverInfo.value = null;
-    return;
+    return null;
   }
   const rect = canvasEl.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -673,8 +711,7 @@ function updateHoverInfo(event: MouseEvent) {
   raycaster.setFromCamera(pointer, camera);
   const intersects = raycaster.intersectObject(mainMesh, true);
   if (!intersects.length) {
-    hoverInfo.value = null;
-    return;
+    return null;
   }
   const point = intersects[0].point;
   const { lat, lon } = cartesianToLatLon(point.x, point.y, point.z);
@@ -687,8 +724,7 @@ function updateHoverInfo(event: MouseEvent) {
     const index = yIdx * cols + xIdx;
     const value = currentField.value[index];
     if (value === undefined || Number.isNaN(value)) {
-      hoverInfo.value = null;
-      return;
+      return null;
     }
     let color: string | undefined = undefined;
     if (colormapTransform.value) {
@@ -704,21 +740,28 @@ function updateHoverInfo(event: MouseEvent) {
         normalized
       );
     }
+    const rawUnits = currentUnits.value;
+    const useCelsius = isKelvinUnit(rawUnits) && temperatureUnitCelsius.value;
+    const displayValue = useCelsius ? value - 273.15 : value;
+    const displayUnits = useCelsius ? "C" : rawUnits;
     const boxRect = boxEl.getBoundingClientRect();
-    hoverInfo.value = {
+    return {
       x: event.clientX - boxRect.left,
       y: event.clientY - boxRect.top - 16,
       value,
-      units: currentUnits.value,
+      displayValue,
+      units: rawUnits,
+      displayUnits,
       color,
     };
   } catch {
-    hoverInfo.value = null;
+    return null;
   }
 }
 
 function handleMouseLeave() {
   hoverInfo.value = null;
+  hoverScalarValue.value = undefined;
   if (hoverTimeoutId.value !== null) {
     clearTimeout(hoverTimeoutId.value);
     hoverTimeoutId.value = null;
@@ -757,6 +800,7 @@ function findNearestIndex(array: Float64Array, value: number) {
 function handlePointerDown() {
   isPointerDown.value = true;
   hoverInfo.value = null;
+  hoverScalarValue.value = undefined;
   if (hoverTimeoutId.value !== null) {
     clearTimeout(hoverTimeoutId.value);
     hoverTimeoutId.value = null;
@@ -773,7 +817,7 @@ function handlePointerUp() {
   <div ref="box" class="globe_box" tabindex="0" autofocus>
     <canvas ref="canvas" class="globe_canvas"> </canvas>
     <div
-      v-if="hoverInfo"
+      v-if="ENABLE_HOVER_TOOLTIP && hoverInfo"
       class="globe-tooltip"
       :style="{ left: `${hoverInfo.x}px`, top: `${hoverInfo.y}px` }"
     >
@@ -782,8 +826,8 @@ function handlePointerUp() {
         class="globe-tooltip__swatch"
         :style="{ background: hoverInfo.color }"
       ></span>
-      {{ hoverInfo.value.toFixed(3) }}
-      <span v-if="hoverInfo.units">&nbsp;{{ hoverInfo.units }}</span>
+      {{ formatTwoSignificant(hoverInfo.displayValue) }}
+      <span v-if="hoverInfo.displayUnits">&nbsp;{{ hoverInfo.displayUnits }}</span>
     </div>
   </div>
 </template>
