@@ -20,6 +20,11 @@ import { useUrlParameterStore } from "./store/paramStore.ts";
 import { getLandSeaMask, loadJSON } from "./utils/landSeaMask.ts";
 import debounce from "lodash.debounce";
 
+// Drag mode switch:
+// - true: keep picked Earth surface point under cursor while dragging
+// - false: use default OrbitControls left-drag rotation
+const USE_SPHERE_LOCKED_DRAG = true;
+
 export function useSharedGlobeLogic(
   canvas: Ref<HTMLCanvasElement | undefined>,
   box: Ref<HTMLDivElement | undefined>
@@ -47,6 +52,10 @@ export function useSharedGlobeLogic(
   let updateLOD: (() => void) | undefined = undefined;
   let mouseDown = false;
   const frameId = ref(0);
+  const raycaster = new THREE.Raycaster();
+  const unitSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1.0);
+  let draggingSurface = false;
+  let draggedPoint = new THREE.Vector3();
 
   watch(
     () => showCoastLines.value,
@@ -190,7 +199,23 @@ export function useSharedGlobeLogic(
     // under the texture when zoomed in
     orbitControls.minDistance = 1.1;
     orbitControls.enablePan = false;
+    orbitControls.enableDamping = false;
+    if (USE_SPHERE_LOCKED_DRAG) {
+      // Left-drag is handled manually to lock a picked surface point under cursor.
+      orbitControls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+      orbitControls.touches.ONE = THREE.TOUCH.PAN;
+    }
+    updateRotateSpeed();
     updateCoastlines();
+  }
+
+  function updateRotateSpeed() {
+    if (!orbitControls) {
+      return;
+    }
+    const viewportHeight = box.value?.clientHeight ?? window.innerHeight;
+    const clampedScale = Math.min(Math.max(viewportHeight / 1200, 0.55), 1);
+    orbitControls.rotateSpeed = 0.18 * clampedScale;
   }
 
   function onCanvasResize() {
@@ -210,11 +235,32 @@ export function useSharedGlobeLogic(
       if (width.value !== undefined && height.value !== undefined) {
         myRenderer.setSize(width.value, height.value);
       }
+      updateRotateSpeed();
       redraw();
       if (box.value) {
         getResizeObserver()!.observe(box.value);
       }
     }
+  }
+
+  function pointOnEarthFromPointer(
+    event: PointerEvent | MouseEvent | Touch
+  ): THREE.Vector3 | undefined {
+    const myRenderer = getRenderer();
+    const myCamera = getCamera();
+    if (!myRenderer || !myCamera) {
+      return undefined;
+    }
+
+    const rect = myRenderer.domElement.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(new THREE.Vector2(x, y), myCamera);
+    const hit = new THREE.Vector3();
+    if (!raycaster.ray.intersectSphere(unitSphere, hit)) {
+      return undefined;
+    }
+    return hit.normalize();
   }
 
   function toggleRotate() {
@@ -246,11 +292,48 @@ export function useSharedGlobeLogic(
 
     canvasValue.addEventListener("mouseup", () => {
       mouseDown = false;
+      if (USE_SPHERE_LOCKED_DRAG) {
+        draggingSurface = false;
+      }
     });
 
-    canvasValue.addEventListener("mousedown", () => {
+    canvasValue.addEventListener("mousedown", (event: MouseEvent) => {
       mouseDown = true;
+      if (USE_SPHERE_LOCKED_DRAG && event.button === 0) {
+        const picked = pointOnEarthFromPointer(event);
+        if (picked) {
+          draggedPoint.copy(picked);
+          draggingSurface = true;
+        } else {
+          draggingSurface = false;
+        }
+      }
       animationLoop();
+    });
+
+    canvasValue.addEventListener("mousemove", (event: MouseEvent) => {
+      if (!USE_SPHERE_LOCKED_DRAG || !draggingSurface || event.buttons !== 1) {
+        return;
+      }
+      const current = pointOnEarthFromPointer(event);
+      if (!current) {
+        return;
+      }
+      const myCamera = getCamera();
+      if (!myCamera) {
+        return;
+      }
+      // Rotate camera so the currently hovered point maps back to the picked one.
+      const delta = new THREE.Quaternion().setFromUnitVectors(
+        current,
+        draggedPoint
+      );
+      myCamera.position.applyQuaternion(delta);
+      myCamera.up.applyQuaternion(delta);
+      myCamera.lookAt(0, 0, 0);
+      getOrbitControls()?.update();
+      render();
+      debouncedEncodeCameraToURL(myCamera);
     });
 
     canvasValue.addEventListener(
@@ -268,6 +351,9 @@ export function useSharedGlobeLogic(
       "touchend",
       () => {
         mouseDown = false;
+        if (USE_SPHERE_LOCKED_DRAG) {
+          draggingSurface = false;
+        }
       },
       {
         passive: true,
