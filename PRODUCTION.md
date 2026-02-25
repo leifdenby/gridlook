@@ -18,7 +18,7 @@ The Compose setup uses label-based Traefik configuration in `docker-compose.yml`
 
 - DNS A/AAAA record for `dmidev.org` points to this server.
 - Ports `80` and `443` are open inbound.
-- Docker Engine + Docker Compose installed.
+- Docker Engine + Docker Compose v2 plugin installed.
 - A valid ACME contact email address.
 
 ## Runtime Configuration
@@ -102,13 +102,31 @@ sudo systemctl enable --now docker
 sudo usermod -aG docker $USER
 newgrp docker
 docker version
-docker compose version || echo "Compose plugin missing"
+docker compose version || echo "docker compose missing"
 ```
 
-If Compose is missing:
+If Compose plugin is missing, install it:
 
 ```sh
 sudo dnf install -y docker-compose-plugin
+docker compose version
+```
+
+If `docker-compose-plugin` is not available via `dnf`, install manually:
+
+```sh
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64) BIN=docker-compose-linux-x86_64 ;;
+  aarch64|arm64) BIN=docker-compose-linux-aarch64 ;;
+  *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+esac
+
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -SL "https://github.com/docker/compose/releases/latest/download/${BIN}" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
 docker compose version
 ```
 
