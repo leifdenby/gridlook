@@ -1,0 +1,53 @@
+services:
+  traefik:
+    image: traefik:v3.1
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.web.http.redirections.entrypoint.permanent=true
+      - --certificatesresolvers.letsencrypt.acme.email=${TRAEFIK_ACME_EMAIL:?Set TRAEFIK_ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    networks:
+      - web
+    restart: unless-stopped
+
+  app:
+    image: ${GRIDLOOK_APP_IMAGE:-ghcr.io/leifdenby/gridlook/gridlook-app:latest}
+    environment:
+      GRIDLOOK_DEFAULT_DATASET_PATH: ${GRIDLOOK_DEFAULT_DATASET_PATH:-static/index_mr_dpp0066.json}
+      GRIDLOOK_DEFAULT_VARIABLE_NAME: ${GRIDLOOK_DEFAULT_VARIABLE_NAME:-}
+    expose:
+      - "80"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.gridlook.rule=Host(`dmidev.org`) && (PathPrefix(`/dini`) || Path(`/dini`))
+      - traefik.http.routers.gridlook.entrypoints=websecure
+      - traefik.http.routers.gridlook.tls=true
+      - traefik.http.routers.gridlook.tls.certresolver=letsencrypt
+      - traefik.http.routers.gridlook.service=gridlook
+      - traefik.http.services.gridlook.loadbalancer.server.port=80
+      - traefik.http.routers.gridlook.middlewares=gridlook-strip-dini
+      - traefik.http.middlewares.gridlook-strip-dini.stripprefix.prefixes=/dini
+      - traefik.http.middlewares.gridlook-strip-dini.stripprefix.forceslash=false
+    networks:
+      - web
+    restart: unless-stopped
+
+volumes:
+  letsencrypt:
+
+networks:
+  web:

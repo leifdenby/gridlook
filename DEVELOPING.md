@@ -88,3 +88,25 @@ docker compose down
 
 docker compose down -v
 ```
+
+## Publish Production Image (GHCR)
+
+Build and push an image to GitHub Container Registry (`ghcr.io`):
+
+```sh
+gh auth refresh -h github.com -s write:packages,read:packages,repo
+gh auth token | docker login ghcr.io -u "$(gh api user --jq .login)" --password-stdin
+
+docker build -t ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25 .
+docker push ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25
+```
+
+If push fails with:
+
+`permission_denied: The token provided does not match expected scopes`
+
+refresh `gh` auth with package scopes again:
+
+```sh
+gh auth refresh -h github.com -s write:packages,read:packages,repo
+```

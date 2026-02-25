@@ -4,7 +4,8 @@ This document describes running Gridlook behind Traefik with TLS on:
 
 - `https://dmidev.org/dini`
 
-The Compose setup uses label-based Traefik configuration in `docker-compose.yml`.
+The Compose setup uses label-based Traefik configuration in
+`docker-compose.prod.yml`.
 
 ## What This Setup Does
 
@@ -40,16 +41,17 @@ GRIDLOOK_DEFAULT_VARIABLE_NAME=
 
 ## Start / Update
 
-Build and start Traefik + app:
+Pull and start Traefik + app:
 
 ```sh
-docker compose --env-file .env.prod up --build -d traefik app
+docker compose -f docker-compose.prod.yml --env-file .env.prod pull app
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d traefik app
 ```
 
 Update runtime config values without rebuilding image:
 
 ```sh
-docker compose --env-file .env.prod up -d --force-recreate app
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --force-recreate app
 ```
 
 ## Verify
@@ -57,13 +59,13 @@ docker compose --env-file .env.prod up -d --force-recreate app
 Check containers:
 
 ```sh
-docker compose ps
+docker compose -f docker-compose.prod.yml ps
 ```
 
 Check runtime config rendered in container:
 
 ```sh
-docker compose exec app sh -lc 'cat /usr/share/nginx/html/runtime-config.js'
+docker compose -f docker-compose.prod.yml exec app sh -lc 'cat /usr/share/nginx/html/runtime-config.js'
 ```
 
 Test redirect and HTTPS routing:
@@ -82,7 +84,9 @@ Expected behavior:
 
 - `runtime-config.js` is configured as non-cacheable in Nginx.
 - ACME cert state is persisted in the `letsencrypt` named volume.
-- Traefik config is fully defined in `docker-compose.yml` labels and command args.
+- Traefik config is fully defined in `docker-compose.prod.yml` labels and
+  command args.
+- The production compose file defines which image tag is used (`GRIDLOOK_APP_IMAGE`).
 
 ## Fresh EC2 Setup (Amazon Linux 2023)
 
@@ -174,6 +178,7 @@ cd gridlook
 ```sh
 cat > .env.prod <<'EOF'
 TRAEFIK_ACME_EMAIL=ops@dmidev.org
+GRIDLOOK_APP_IMAGE=ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25
 GRIDLOOK_DEFAULT_DATASET_PATH=https://harmonie-zarr.s3.amazonaws.com/dini/control/2026-02-25T030000Z/single_levels.zarr
 GRIDLOOK_DEFAULT_VARIABLE_NAME=
 EOF
@@ -182,13 +187,14 @@ EOF
 ### 7. Start services
 
 ```sh
-docker compose --env-file .env.prod up --build -d traefik app
+docker compose -f docker-compose.prod.yml --env-file .env.prod pull app
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d traefik app
 ```
 
 ### 8. Verify deployment
 
 ```sh
-docker compose ps
+docker compose -f docker-compose.prod.yml ps
 curl -I http://dmidev.org/dini
 curl -I https://dmidev.org/dini
 ```
@@ -203,5 +209,5 @@ Expected:
 After editing `.env.prod`:
 
 ```sh
-docker compose --env-file .env.prod up -d --force-recreate app
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --force-recreate app
 ```
