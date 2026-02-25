@@ -33,6 +33,16 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=web
+      # The app is built with relative asset URLs ("./..."). Without a trailing
+      # slash, "/dini" resolves assets from "/" and breaks CSS/JS loading.
+      - traefik.http.routers.gridlook-slash.rule=Host(`dmidev.org`) && Path(`/dini`)
+      - traefik.http.routers.gridlook-slash.entrypoints=websecure
+      - traefik.http.routers.gridlook-slash.tls=true
+      - traefik.http.routers.gridlook-slash.tls.certresolver=letsencrypt
+      - traefik.http.routers.gridlook-slash.middlewares=gridlook-add-slash
+      - traefik.http.middlewares.gridlook-add-slash.redirectregex.regex=^https?://([^/]+)/dini$
+      - traefik.http.middlewares.gridlook-add-slash.redirectregex.replacement=https://$${1}/dini/
+      - traefik.http.middlewares.gridlook-add-slash.redirectregex.permanent=true
       - traefik.http.routers.gridlook.rule=Host(`dmidev.org`) && (PathPrefix(`/dini`) || Path(`/dini`))
       - traefik.http.routers.gridlook.entrypoints=websecure
       - traefik.http.routers.gridlook.tls=true
