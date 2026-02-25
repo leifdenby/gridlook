@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      GRIDLOOK_DEFAULT_DATASET_PATH: ${GRIDLOOK_DEFAULT_DATASET_PATH:-${VITE_DEFAULT_DATASET_PATH:-static/index_mr_dpp0066.json}}
+      GRIDLOOK_DEFAULT_VARIABLE_NAME: ${GRIDLOOK_DEFAULT_VARIABLE_NAME:-${VITE_DEFAULT_VARIABLE_NAME:-}}
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  dev:
+    image: node:20-alpine
+    working_dir: /workspace
+    command: sh -lc "npm ci && npm run dev -- --host 0.0.0.0 --port 3000"
+    volumes:
+      - .:/workspace
+      - node_modules:/workspace/node_modules
+    ports:
+      - "3000:3000"
+    tty: true
+    stdin_open: true
+
+volumes:
+  node_modules:
