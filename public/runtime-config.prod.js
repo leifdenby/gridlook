@@ -43,7 +43,7 @@
 
   // Use this same file as the resolver script entrypoint.
   window.__GRIDLOOK_CONFIG__ = {
-    defaultDatasetPath: "/runtime-config.js",
+    defaultDatasetPath: "./runtime-config.js",
     defaultVariableName: "",
   };
 })();

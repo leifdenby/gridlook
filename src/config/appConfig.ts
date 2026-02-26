@@ -23,20 +23,17 @@ function isResolverScriptPath(path: string) {
 }
 
 async function loadResolverScript(path: string) {
-  if (!path.startsWith("/")) {
-    throw new Error(
-      `Resolver script must be a local absolute path (got: ${path})`
-    );
-  }
+  const resolvedScriptUrl = new URL(path, window.location.href).toString();
   if (resolverScriptLoadPromise) {
     return resolverScriptLoadPromise;
   }
   resolverScriptLoadPromise = new Promise<void>((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = path;
+    script.src = resolvedScriptUrl;
     script.async = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`Failed to load resolver: ${path}`));
+    script.onerror = () =>
+      reject(new Error(`Failed to load resolver: ${resolvedScriptUrl}`));
     document.head.appendChild(script);
   });
   return resolverScriptLoadPromise;
