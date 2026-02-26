@@ -10,14 +10,12 @@ const runtimeConfig = window.__GRIDLOOK_CONFIG__ ?? {};
 let resolverScriptLoadPromise: Promise<void> | undefined;
 
 const configuredDefaultDatasetPath =
-  normalizeValue(import.meta.env.GRIDLOOK_DEFAULT_DATASET_PATH) ??
   normalizeValue(runtimeConfig.defaultDatasetPath) ??
   fallbackDatasetPath;
 
 export const DEFAULT_DATASET_PATH = configuredDefaultDatasetPath;
 
 export const DEFAULT_VARIABLE_NAME =
-  normalizeValue(import.meta.env.GRIDLOOK_DEFAULT_VARIABLE_NAME) ??
   normalizeValue(runtimeConfig.defaultVariableName);
 
 function isResolverScriptPath(path: string) {

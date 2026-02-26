@@ -25,21 +25,38 @@ Notes:
 - The `app` service uses a multi-stage `Dockerfile`.
 - Stage 1 builds the app with Node.js.
 - Stage 2 serves `dist/` with Nginx on port `80`.
-- Runtime defaults are injected into `/runtime-config.js` at container startup.
+- Runtime defaults are read from `runtime-config.js` bundled into the image.
+- To override runtime config from host without rebuilding, uncomment the
+  `runtime-config.js` bind mount in `docker-compose.yml`.
 
 ### Runtime Configuration (no rebuild required)
 
-Set values in an env file and restart only the `app` service:
+Default behavior: edit `public/runtime-config.js` and rebuild app image:
 
 ```sh
-docker compose --env-file .env.prod up -d app
+docker compose up --build -d app
 ```
 
-Example `.env.prod`:
+Example `public/runtime-config.js`:
+
+```js
+window.__GRIDLOOK_CONFIG__ = {
+  defaultDatasetPath: "static/index_mr_eurec4a.json",
+  defaultVariableName: "tas",
+};
+```
+
+Host-override behavior (no rebuild): uncomment this in `docker-compose.yml`:
+
+```yaml
+# volumes:
+#   - ./public/runtime-config.js:/usr/share/nginx/html/runtime-config.js:ro
+```
+
+Then recreate app:
 
 ```sh
-GRIDLOOK_DEFAULT_DATASET_PATH=static/index_mr_eurec4a.json
-GRIDLOOK_DEFAULT_VARIABLE_NAME=tas
+docker compose up -d --force-recreate app
 ```
 
 ## Development Container (without VS Code)
@@ -58,18 +75,9 @@ Notes:
 
 - Source code is mounted from your host (`.:/workspace`).
 - `node_modules` is stored in a named Docker volume.
-- Host resolver scripts in `./runtime-resolver` are mounted into Vite public
-  files at `/runtime-resolver/*`.
 
-To use a resolver script in dev:
-
-1. Use the bundled example resolver at:
-   `runtime-resolver/default-dataset-resolver.js`
-   (it checks latest 3-hour cycles with 3-hour lag and falls back until it
-   finds an available Zarr path).
-2. Set `GRIDLOOK_DEFAULT_DATASET_PATH=/runtime-resolver/default-dataset-resolver.js`
-   in your shell (or `.env` used by compose).
-3. Restart the `dev` service.
+To use dynamic default dataset selection in dev, edit `public/runtime-config.js`
+and compute `defaultDatasetPath` directly there.
 
 ## VS Code Dev Container
 
@@ -88,9 +96,9 @@ After attach, the app is available on:
 
 docker compose up --build -d app
 
-# Start app using custom runtime env vars
+# Recreate app after runtime-config.js change
 
-docker compose --env-file .env.prod up -d app
+docker compose up -d --force-recreate app
 
 # Stop containers
 

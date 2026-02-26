@@ -3,10 +3,6 @@
   "dockerComposeFile": "../docker-compose.yml",
   "service": "dev",
   "workspaceFolder": "/workspace",
-  "containerEnv": {
-    "GRIDLOOK_DEFAULT_DATASET_PATH": "/runtime-resolver/default-dataset-resolver.js",
-    "GRIDLOOK_DEFAULT_VARIABLE_NAME": "t2m"
-  },
   "shutdownAction": "stopCompose",
   "customizations": {
     "vscode": {

@@ -24,20 +24,22 @@ The Compose setup uses label-based Traefik configuration in
 
 ## Runtime Configuration
 
-The app reads runtime defaults from container environment variables:
+By default, the production image uses bundled `runtime-config.js`.
+You can optionally override it from host by uncommenting the bind mount in
+`docker-compose.prod.yml`.
 
-- `GRIDLOOK_DEFAULT_DATASET_PATH`
-- `GRIDLOOK_DEFAULT_VARIABLE_NAME`
+Optional host override mount:
 
-These are written into `runtime-config.js` when the app container starts.
+- Host file: `./public/runtime-config.js`
+- Container path: `/usr/share/nginx/html/runtime-config.js`
 
-`GRIDLOOK_DEFAULT_DATASET_PATH` now supports both static and dynamic modes:
+`defaultDatasetPath` in `runtime-config.js` supports both static and dynamic
+modes:
 
 - If value does **not** end with `.js`, it is used directly as dataset path/URL.
 - If value **does** end with `.js`, it is treated as a local resolver script
-  path (for example `/runtime-resolver/default-dataset-resolver.js`), loaded at
-  startup, and `window.__GRIDLOOK_DATASET_PATH_RESOLVER__()` is called to get
-  the actual dataset URL.
+  path and `window.__GRIDLOOK_DATASET_PATH_RESOLVER__()` is called to get the
+  actual dataset URL.
 - If resolver loading/execution fails, Gridlook falls back to the built-in
   static default dataset.
 
@@ -57,74 +59,37 @@ Example `.env.prod`:
 
 ```sh
 TRAEFIK_ACME_EMAIL=ops@dmidev.org
-GRIDLOOK_DEFAULT_DATASET_PATH=https://harmonie-zarr.s3.amazonaws.com/dini/control/2026-02-25T030000Z/single_levels.zarr
-GRIDLOOK_DEFAULT_VARIABLE_NAME=
 ```
 
-The production compose file mounts a host directory for resolver scripts:
+### Dynamic Path Directly In runtime-config.js
 
-- Host path: `./runtime-resolver`
-- Container/web path: `/runtime-resolver/*`
+You can compute the default dataset path directly in `runtime-config.js`.
+If you want to change this without rebuilding the image, uncomment the
+`runtime-config.js` bind mount in `docker-compose.prod.yml` and edit
+`public/runtime-config.js` on the host.
 
-### Resolver Script (Dynamic Default Dataset)
-
-Resolver mode is activated by setting `GRIDLOOK_DEFAULT_DATASET_PATH` to a
-local `.js` path served by the app, for example:
-
-- `/runtime-resolver/default-dataset-resolver.js`
-
-Example resolver script:
+Example:
 
 ```js
-window.__GRIDLOOK_DATASET_PATH_RESOLVER__ = function () {
-  const now = new Date();
-  const lagHours = 3;
-  const cycleHours = 3;
-  const t = new Date(now.getTime() - lagHours * 3600 * 1000);
-  t.setUTCMinutes(0, 0, 0);
-  t.setUTCHours(t.getUTCHours() - (t.getUTCHours() % cycleHours));
+const now = new Date();
+const lagHours = 3;
+const cycleHours = 3;
+const t = new Date(now.getTime() - lagHours * 3600 * 1000);
+t.setUTCMinutes(0, 0, 0);
+t.setUTCHours(t.getUTCHours() - (t.getUTCHours() % cycleHours));
 
-  const yyyy = t.getUTCFullYear();
-  const mm = String(t.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(t.getUTCDate()).padStart(2, "0");
-  const HH = String(t.getUTCHours()).padStart(2, "0");
+const yyyy = t.getUTCFullYear();
+const mm = String(t.getUTCMonth() + 1).padStart(2, "0");
+const dd = String(t.getUTCDate()).padStart(2, "0");
+const HH = String(t.getUTCHours()).padStart(2, "0");
 
-  return `https://harmonie-zarr.s3.amazonaws.com/dini/control/${yyyy}-${mm}-${dd}T${HH}0000Z/single_levels.zarr`;
+window.__GRIDLOOK_CONFIG__ = {
+  defaultDatasetPath: `https://harmonie-zarr.s3.amazonaws.com/dini/control/${yyyy}-${mm}-${dd}T${HH}0000Z/single_levels.zarr`,
+  defaultVariableName: "",
 };
 ```
 
-### Using A Host-Provided Resolver Script
-
-1. Create script on host (same directory as `docker-compose.prod.yml`):
-
-```sh
-mkdir -p runtime-resolver
-cat > runtime-resolver/default-dataset-resolver.js <<'EOF'
-window.__GRIDLOOK_DATASET_PATH_RESOLVER__ = function () {
-  const now = new Date();
-  const lagHours = 3;
-  const cycleHours = 3;
-  const t = new Date(now.getTime() - lagHours * 3600 * 1000);
-  t.setUTCMinutes(0, 0, 0);
-  t.setUTCHours(t.getUTCHours() - (t.getUTCHours() % cycleHours));
-
-  const yyyy = t.getUTCFullYear();
-  const mm = String(t.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(t.getUTCDate()).padStart(2, "0");
-  const HH = String(t.getUTCHours()).padStart(2, "0");
-
-  return `https://harmonie-zarr.s3.amazonaws.com/dini/control/${yyyy}-${mm}-${dd}T${HH}0000Z/single_levels.zarr`;
-};
-EOF
-```
-
-2. Point `GRIDLOOK_DEFAULT_DATASET_PATH` to mounted script path:
-
-```sh
-GRIDLOOK_DEFAULT_DATASET_PATH=/runtime-resolver/default-dataset-resolver.js
-```
-
-3. Recreate app container to refresh runtime config:
+After editing runtime config, restart app container:
 
 ```sh
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --force-recreate app
@@ -139,7 +104,7 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod pull app
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d traefik app
 ```
 
-Update runtime config values without rebuilding image:
+Update deployment:
 
 ```sh
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --force-recreate app
@@ -270,9 +235,39 @@ cd gridlook
 cat > .env.prod <<'EOF'
 TRAEFIK_ACME_EMAIL=ops@dmidev.org
 GRIDLOOK_APP_IMAGE=ghcr.io/leifdenby/gridlook/gridlook-app:2026-02-25
-GRIDLOOK_DEFAULT_DATASET_PATH=https://harmonie-zarr.s3.amazonaws.com/dini/control/2026-02-25T030000Z/single_levels.zarr
-GRIDLOOK_DEFAULT_VARIABLE_NAME=
 EOF
+```
+
+### 6b. Configure runtime-config.js
+
+```sh
+cat > public/runtime-config.js <<'EOF'
+const now = new Date();
+const lagHours = 3;
+const cycleHours = 3;
+const t = new Date(now.getTime() - lagHours * 3600 * 1000);
+t.setUTCMinutes(0, 0, 0);
+t.setUTCHours(t.getUTCHours() - (t.getUTCHours() % cycleHours));
+
+const yyyy = t.getUTCFullYear();
+const mm = String(t.getUTCMonth() + 1).padStart(2, "0");
+const dd = String(t.getUTCDate()).padStart(2, "0");
+const HH = String(t.getUTCHours()).padStart(2, "0");
+
+window.__GRIDLOOK_CONFIG__ = {
+  defaultDatasetPath: `https://harmonie-zarr.s3.amazonaws.com/dini/control/${yyyy}-${mm}-${dd}T${HH}0000Z/single_levels.zarr`,
+  defaultVariableName: "",
+};
+EOF
+```
+
+### 6c. (Optional) Enable host runtime-config.js override
+
+In `docker-compose.prod.yml`, uncomment:
+
+```yaml
+# volumes:
+#   - ./public/runtime-config.js:/usr/share/nginx/html/runtime-config.js:ro
 ```
 
 ### 7. Start services

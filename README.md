@@ -50,16 +50,18 @@ See [Vite Configuration Reference](https://vitejs.dev/config/).
 
 The project is served at http://localhost:3000/ when you run `npm run dev`.
 
-Default dataset path can be configured via env var:
+Default dataset path and default variable are configured in
+`public/runtime-config.js`:
 
-```sh
-GRIDLOOK_DEFAULT_DATASET_PATH=static/index_mr_dpp0066.json
-GRIDLOOK_DEFAULT_VARIABLE_NAME=
+```js
+window.__GRIDLOOK_CONFIG__ = {
+  defaultDatasetPath: "static/index_mr_dpp0066.json",
+  defaultVariableName: "",
+};
 ```
 
 `GRIDLOOK_DEFAULT_VARIABLE_NAME` is optional and only used if that variable exists
-in the currently loaded dataset. Copy `.env.example` to `.env.local` and adjust
-the values for local development.
+in the currently loaded dataset.
 
 For containerized production runtime configuration, see `DEVELOPING.md`.
 
