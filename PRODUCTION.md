@@ -257,6 +257,7 @@ const HH = String(t.getUTCHours()).padStart(2, "0");
 window.__GRIDLOOK_CONFIG__ = {
   defaultDatasetPath: `https://harmonie-zarr.s3.amazonaws.com/dini/control/${yyyy}-${mm}-${dd}T${HH}0000Z/single_levels.zarr`,
   defaultVariableName: "",
+  defaultTimeIndex: (availableTimes) => availableTimes.length - 1,
 };
 EOF
 ```

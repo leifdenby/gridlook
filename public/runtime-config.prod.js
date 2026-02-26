@@ -45,5 +45,28 @@
   window.__GRIDLOOK_CONFIG__ = {
     defaultDatasetPath: "./runtime-config.js",
     defaultVariableName: "",
+    defaultTimeIndex: (availableTimes) => {
+      if (!Array.isArray(availableTimes) || availableTimes.length === 0) {
+        return 0;
+      }
+
+      const nowMs = Date.now();
+      let bestIndex = 0;
+      let bestDistance = Number.POSITIVE_INFINITY;
+
+      for (let i = 0; i < availableTimes.length; i += 1) {
+        const timeMs = Date.parse(availableTimes[i]);
+        if (!Number.isFinite(timeMs)) {
+          continue;
+        }
+        const distance = Math.abs(timeMs - nowMs);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = i;
+        }
+      }
+
+      return bestIndex;
+    },
   };
 })();

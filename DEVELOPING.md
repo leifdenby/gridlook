@@ -43,8 +43,12 @@ Example `public/runtime-config.js`:
 window.__GRIDLOOK_CONFIG__ = {
   defaultDatasetPath: "static/index_mr_eurec4a.json",
   defaultVariableName: "tas",
+  defaultTimeIndex: (availableTimes) => availableTimes.length - 1,
 };
 ```
+
+`defaultTimeIndex` can be either a number or a function that receives an
+array of available times (ISO strings) and returns the index to use.
 
 Host-override behavior (no rebuild): uncomment this in `docker-compose.dev.yaml`:
 

@@ -22,7 +22,11 @@ import {
   LAMBERT_GRID_MAPPING_NAMES,
   lambertParamsFromAttributes,
 } from "@/components/utils/cfProjection";
-import { DEFAULT_VARIABLE_NAME } from "../config/appConfig";
+import { decodeTime } from "@/components/utils/timeHandling";
+import {
+  DEFAULT_VARIABLE_NAME,
+  resolveDefaultTimeIndex,
+} from "../config/appConfig";
 import {
   resolvePhysicalVarName,
   withDerivedVariables,
@@ -49,7 +53,7 @@ const { varnameSelector, loading, colormap, invertColormap } =
   storeToRefs(store);
 
 const urlParameterStore = useUrlParameterStore();
-const { paramVarname } = storeToRefs(urlParameterStore);
+const { paramVarname, paramTimeIndex } = storeToRefs(urlParameterStore);
 
 const globe: Ref<typeof Globe | null> = ref(null);
 const globeKey = ref(0);
@@ -197,6 +201,49 @@ async function indexFromIndex(src: string) {
   return await res.json();
 }
 
+async function applyConfiguredDefaultTimeIndex() {
+  if (paramTimeIndex.value !== undefined && paramTimeIndex.value !== "") {
+    return;
+  }
+  if (!datasources.value) {
+    return;
+  }
+
+  try {
+    const timeSource = datasources.value.levels[0].time;
+    const timeRoot = zarr.root(new zarr.FetchStore(timeSource.store));
+    const timeVar = await zarr.open(timeRoot.resolve(timeSource.dataset), {
+      kind: "array",
+    });
+    const rawValues = (await zarr.get(timeVar, [null])).data as ArrayLike<number>;
+    const availableTimes = Array.from(rawValues).map((value) =>
+      decodeTime(value, timeVar.attrs).toISOString()
+    );
+    if (availableTimes.length === 0) {
+      return;
+    }
+    const resolvedIndex = await resolveDefaultTimeIndex(availableTimes);
+    if (resolvedIndex === undefined) {
+      return;
+    }
+    const clampedIndex = Math.max(
+      0,
+      Math.min(availableTimes.length - 1, resolvedIndex)
+    );
+    store.timeIndexSlider = clampedIndex;
+    store.timeIndexDisplay = clampedIndex;
+    console.info("[Gridlook] Applied runtime-config defaultTimeIndex", {
+      requested: resolvedIndex,
+      applied: clampedIndex,
+      availableCount: availableTimes.length,
+    });
+  } catch (error) {
+    console.warn("[Gridlook] Failed to apply runtime-config defaultTimeIndex", {
+      error,
+    });
+  }
+}
+
 const updateSrc = async () => {
   const src = props.src;
 
@@ -213,6 +260,7 @@ const updateSrc = async () => {
       if (src === props.src) {
         datasources.value = withDerivedVariables(index.value);
       }
+      await applyConfiguredDefaultTimeIndex();
       const availableVars = Object.keys(modelInfo.value!.vars);
       const configuredDefaultVar =
         DEFAULT_VARIABLE_NAME && availableVars.includes(DEFAULT_VARIABLE_NAME)

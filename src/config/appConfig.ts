@@ -18,6 +18,39 @@ export const DEFAULT_DATASET_PATH = configuredDefaultDatasetPath;
 export const DEFAULT_VARIABLE_NAME =
   normalizeValue(runtimeConfig.defaultVariableName);
 
+function normalizeTimeIndex(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const floored = Math.floor(value);
+  return floored >= 0 ? floored : undefined;
+}
+
+const configuredDefaultTimeIndex = runtimeConfig.defaultTimeIndex;
+
+export async function resolveDefaultTimeIndex(
+  availableTimes: string[]
+): Promise<number | undefined> {
+  if (typeof configuredDefaultTimeIndex === "function") {
+    try {
+      const resolved = await configuredDefaultTimeIndex(availableTimes);
+      const normalized = normalizeTimeIndex(resolved);
+      if (normalized === undefined) {
+        console.warn(
+          "[Gridlook] defaultTimeIndex resolver returned invalid index",
+          {
+            resolved,
+          }
+        );
+      }
+      return normalized;
+    } catch (error) {
+      console.warn("[Gridlook] Failed to resolve defaultTimeIndex", error);
+      return undefined;
+    }
+  }
+
+  return normalizeTimeIndex(configuredDefaultTimeIndex);
+}
+
 function isResolverScriptPath(path: string) {
   return path.toLowerCase().endsWith(".js");
 }

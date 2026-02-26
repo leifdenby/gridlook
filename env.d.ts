@@ -8,5 +8,8 @@ interface Window {
   __GRIDLOOK_CONFIG__?: {
     defaultDatasetPath?: string;
     defaultVariableName?: string;
+    defaultTimeIndex?:
+      | number
+      | ((availableTimes: string[]) => number | Promise<number> | undefined);
   };
 }
