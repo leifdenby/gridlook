@@ -3,9 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Optional: uncomment to override runtime-config.js from host without rebuild
-    # volumes:
-    #   - ./public/runtime-config.js:/usr/share/nginx/html/runtime-config.js:ro
     ports:
       - "8080:80"
     expose:
@@ -19,6 +16,9 @@ services:
     volumes:
       - .:/workspace
       - node_modules:/workspace/node_modules
+      # Optional: uncomment to override runtime-config.js from host while using Vite dev server
+      # (Vite serves files from /workspace/public in this container)
+      - ./public/runtime-config.prod.js:/workspace/public/runtime-config.js:ro
     ports:
       - "3000:3000"
     networks:

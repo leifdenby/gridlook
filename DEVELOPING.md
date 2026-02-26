@@ -13,7 +13,7 @@ a local dev container (Vite dev server), and a VS Code devcontainer setup.
 Build and run the production image:
 
 ```sh
-docker compose up --build -d app
+docker compose -f docker-compose.dev.yaml up --build -d app
 ```
 
 Open:
@@ -27,14 +27,14 @@ Notes:
 - Stage 2 serves `dist/` with Nginx on port `80`.
 - Runtime defaults are read from `runtime-config.js` bundled into the image.
 - To override runtime config from host without rebuilding, uncomment the
-  `runtime-config.js` bind mount in `docker-compose.yml`.
+  `runtime-config.js` bind mount in `docker-compose.dev.yaml`.
 
 ### Runtime Configuration (no rebuild required)
 
 Default behavior: edit `public/runtime-config.js` and rebuild app image:
 
 ```sh
-docker compose up --build -d app
+docker compose -f docker-compose.dev.yaml up --build -d app
 ```
 
 Example `public/runtime-config.js`:
@@ -46,17 +46,17 @@ window.__GRIDLOOK_CONFIG__ = {
 };
 ```
 
-Host-override behavior (no rebuild): uncomment this in `docker-compose.yml`:
+Host-override behavior (no rebuild): uncomment this in `docker-compose.dev.yaml`:
 
 ```yaml
 # volumes:
-#   - ./public/runtime-config.js:/usr/share/nginx/html/runtime-config.js:ro
+#   - ./public/runtime-config.prod.js:/workspace/public/runtime-config.js:ro
 ```
 
 Then recreate app:
 
 ```sh
-docker compose up -d --force-recreate app
+docker compose -f docker-compose.dev.yaml up -d --force-recreate app
 ```
 
 ## Development Container (without VS Code)
@@ -64,7 +64,7 @@ docker compose up -d --force-recreate app
 Run the Vite dev server in a container with live reload:
 
 ```sh
-docker compose up dev
+docker compose -f docker-compose.dev.yaml up dev
 ```
 
 Open:
@@ -83,7 +83,7 @@ and compute `defaultDatasetPath` directly there.
 
 1. Open the repo in VS Code.
 2. Run `Dev Containers: Reopen in Container`.
-3. VS Code will attach to the `dev` service from `docker-compose.yml`.
+3. VS Code will attach to the `dev` service from `docker-compose.dev.yaml`.
 
 After attach, the app is available on:
 
@@ -94,19 +94,19 @@ After attach, the app is available on:
 ```sh
 # Rebuild production image and run
 
-docker compose up --build -d app
+docker compose -f docker-compose.dev.yaml up --build -d app
 
 # Recreate app after runtime-config.js change
 
-docker compose up -d --force-recreate app
+docker compose -f docker-compose.dev.yaml up -d --force-recreate app
 
 # Stop containers
 
-docker compose down
+docker compose -f docker-compose.dev.yaml down
 
 # Remove containers + named volumes (including dev node_modules)
 
-docker compose down -v
+docker compose -f docker-compose.dev.yaml down -v
 ```
 
 ## Publish Production Image (GHCR)

@@ -1,6 +1,6 @@
 {
   "name": "gridlook-dev",
-  "dockerComposeFile": "../docker-compose.yml",
+  "dockerComposeFile": "../docker-compose.dev.yaml",
   "service": "dev",
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",

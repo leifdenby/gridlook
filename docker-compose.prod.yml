@@ -26,8 +26,8 @@ services:
   app:
     image: ${GRIDLOOK_APP_IMAGE:-ghcr.io/leifdenby/gridlook/gridlook-app:latest}
     # Optional: uncomment to override runtime-config.js from host without rebuild
-    # volumes:
-    #   - ./public/runtime-config.js:/usr/share/nginx/html/runtime-config.js:ro
+    volumes:
+      - ./public/runtime-config.prod.js:/usr/share/nginx/html/runtime-config.js:ro
     expose:
       - "80"
     labels:
