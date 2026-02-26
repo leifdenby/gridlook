@@ -58,6 +58,18 @@ Notes:
 
 - Source code is mounted from your host (`.:/workspace`).
 - `node_modules` is stored in a named Docker volume.
+- Host resolver scripts in `./runtime-resolver` are mounted into Vite public
+  files at `/runtime-resolver/*`.
+
+To use a resolver script in dev:
+
+1. Use the bundled example resolver at:
+   `runtime-resolver/default-dataset-resolver.js`
+   (it checks latest 3-hour cycles with 3-hour lag and falls back until it
+   finds an available Zarr path).
+2. Set `GRIDLOOK_DEFAULT_DATASET_PATH=/runtime-resolver/default-dataset-resolver.js`
+   in your shell (or `.env` used by compose).
+3. Restart the `dev` service.
 
 ## VS Code Dev Container
 

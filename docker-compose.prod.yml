@@ -28,6 +28,9 @@ services:
     environment:
       GRIDLOOK_DEFAULT_DATASET_PATH: ${GRIDLOOK_DEFAULT_DATASET_PATH:-static/index_mr_dpp0066.json}
       GRIDLOOK_DEFAULT_VARIABLE_NAME: ${GRIDLOOK_DEFAULT_VARIABLE_NAME:-}
+    volumes:
+      # Optional host-provided resolver scripts served by nginx at /runtime-resolver/*
+      - ./runtime-resolver:/usr/share/nginx/html/runtime-resolver:ro
     expose:
       - "80"
     labels:

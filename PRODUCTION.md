@@ -31,6 +31,16 @@ The app reads runtime defaults from container environment variables:
 
 These are written into `runtime-config.js` when the app container starts.
 
+`GRIDLOOK_DEFAULT_DATASET_PATH` now supports both static and dynamic modes:
+
+- If value does **not** end with `.js`, it is used directly as dataset path/URL.
+- If value **does** end with `.js`, it is treated as a local resolver script
+  path (for example `/runtime-resolver/default-dataset-resolver.js`), loaded at
+  startup, and `window.__GRIDLOOK_DATASET_PATH_RESOLVER__()` is called to get
+  the actual dataset URL.
+- If resolver loading/execution fails, Gridlook falls back to the built-in
+  static default dataset.
+
 Before deployment, ensure the image tag in `GRIDLOOK_APP_IMAGE` exists in GHCR
 and includes an amd64 variant (or a multi-platform manifest including amd64).
 Recommended publish command:
@@ -49,6 +59,75 @@ Example `.env.prod`:
 TRAEFIK_ACME_EMAIL=ops@dmidev.org
 GRIDLOOK_DEFAULT_DATASET_PATH=https://harmonie-zarr.s3.amazonaws.com/dini/control/2026-02-25T030000Z/single_levels.zarr
 GRIDLOOK_DEFAULT_VARIABLE_NAME=
+```
+
+The production compose file mounts a host directory for resolver scripts:
+
+- Host path: `./runtime-resolver`
+- Container/web path: `/runtime-resolver/*`
+
+### Resolver Script (Dynamic Default Dataset)
+
+Resolver mode is activated by setting `GRIDLOOK_DEFAULT_DATASET_PATH` to a
+local `.js` path served by the app, for example:
+
+- `/runtime-resolver/default-dataset-resolver.js`
+
+Example resolver script:
+
+```js
+window.__GRIDLOOK_DATASET_PATH_RESOLVER__ = function () {
+  const now = new Date();
+  const lagHours = 3;
+  const cycleHours = 3;
+  const t = new Date(now.getTime() - lagHours * 3600 * 1000);
+  t.setUTCMinutes(0, 0, 0);
+  t.setUTCHours(t.getUTCHours() - (t.getUTCHours() % cycleHours));
+
+  const yyyy = t.getUTCFullYear();
+  const mm = String(t.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(t.getUTCDate()).padStart(2, "0");
+  const HH = String(t.getUTCHours()).padStart(2, "0");
+
+  return `https://harmonie-zarr.s3.amazonaws.com/dini/control/${yyyy}-${mm}-${dd}T${HH}0000Z/single_levels.zarr`;
+};
+```
+
+### Using A Host-Provided Resolver Script
+
+1. Create script on host (same directory as `docker-compose.prod.yml`):
+
+```sh
+mkdir -p runtime-resolver
+cat > runtime-resolver/default-dataset-resolver.js <<'EOF'
+window.__GRIDLOOK_DATASET_PATH_RESOLVER__ = function () {
+  const now = new Date();
+  const lagHours = 3;
+  const cycleHours = 3;
+  const t = new Date(now.getTime() - lagHours * 3600 * 1000);
+  t.setUTCMinutes(0, 0, 0);
+  t.setUTCHours(t.getUTCHours() - (t.getUTCHours() % cycleHours));
+
+  const yyyy = t.getUTCFullYear();
+  const mm = String(t.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(t.getUTCDate()).padStart(2, "0");
+  const HH = String(t.getUTCHours()).padStart(2, "0");
+
+  return `https://harmonie-zarr.s3.amazonaws.com/dini/control/${yyyy}-${mm}-${dd}T${HH}0000Z/single_levels.zarr`;
+};
+EOF
+```
+
+2. Point `GRIDLOOK_DEFAULT_DATASET_PATH` to mounted script path:
+
+```sh
+GRIDLOOK_DEFAULT_DATASET_PATH=/runtime-resolver/default-dataset-resolver.js
+```
+
+3. Recreate app container to refresh runtime config:
+
+```sh
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --force-recreate app
 ```
 
 ## Start / Update

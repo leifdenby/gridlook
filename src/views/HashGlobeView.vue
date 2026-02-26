@@ -8,12 +8,16 @@ import {
   STORE_PARAM_MAPPING,
   useUrlParameterStore,
 } from "../components/store/paramStore";
-import { DEFAULT_DATASET_PATH } from "../config/appConfig";
+import {
+  DEFAULT_DATASET_PATH,
+  resolveDefaultDatasetPath,
+} from "../config/appConfig";
 
 type TParams = Partial<Record<TURLParameterValues, string>>;
 
 const defaultSrc = ref(DEFAULT_DATASET_PATH);
-const src = ref(DEFAULT_DATASET_PATH);
+const src = ref("");
+const initialized = ref(false);
 const params: Ref<TParams> = ref({});
 
 const store = useGlobeControlStore();
@@ -59,10 +63,19 @@ onMounted(() => {
 });
 
 onBeforeMount(() => {
-  onHashChange();
+  resolveDefaultDatasetPath()
+    .then((resolved) => {
+      defaultSrc.value = resolved;
+      onHashChange();
+      initialized.value = true;
+    })
+    .catch(() => {
+      onHashChange();
+      initialized.value = true;
+    });
 });
 </script>
 
 <template>
-  <GlobeView :src="src" />
+  <GlobeView v-if="initialized" :src="src" />
 </template>
