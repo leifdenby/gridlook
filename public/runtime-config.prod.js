@@ -44,7 +44,7 @@
   // Use this same file as the resolver script entrypoint.
   window.__GRIDLOOK_CONFIG__ = {
     defaultDatasetPath: "./runtime-config.js",
-    defaultVariableName: "",
+    defaultVariableName: "t2m",
     defaultTimeIndex: (availableTimes) => {
       if (!Array.isArray(availableTimes) || availableTimes.length === 0) {
         return 0;
