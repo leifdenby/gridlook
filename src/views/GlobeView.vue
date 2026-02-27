@@ -212,9 +212,8 @@ async function applyConfiguredDefaultTimeIndex() {
   try {
     const timeSource = datasources.value.levels[0].time;
     const timeRoot = zarr.root(new zarr.FetchStore(timeSource.store));
-    const timeVar = await zarr.open(timeRoot.resolve(timeSource.dataset), {
-      kind: "array",
-    });
+    const timePath = [timeSource.dataset, "time"].filter(Boolean).join("/");
+    const timeVar = await zarr.open(timeRoot.resolve(timePath), { kind: "array" });
     const rawValues = (await zarr.get(timeVar, [null])).data as ArrayLike<number>;
     const availableTimes = Array.from(rawValues).map((value) =>
       decodeTime(value, timeVar.attrs).toISOString()
