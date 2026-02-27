@@ -451,6 +451,16 @@ watch(localTimeIndexSlider, () => {
   debouncedUpdateTimeIndexSlider();
 });
 
+watch(
+  () => timeIndexSlider.value,
+  (value) => {
+    if (localTimeIndexSlider.value !== value) {
+      localTimeIndexSlider.value = value;
+    }
+  },
+  { immediate: true }
+);
+
 const currentTimeValue = computed(() => {
   return varinfo.value?.timeinfo?.current;
 });
