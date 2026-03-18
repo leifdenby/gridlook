@@ -30,8 +30,7 @@ export type TCoastlineResolution =
 export const useGlobeControlStore = defineStore("globeControl", {
   state: () => {
     return {
-      coastlineResolution:
-        COASTLINE_RESOLUTIONS.MEDIUM as TCoastlineResolution,
+      coastlineResolution: COASTLINE_RESOLUTIONS.MEDIUM as TCoastlineResolution,
       // simplified UI choice (Off|Sea|Land|Globe) — used by controls
       landSeaMaskChoice: LAND_SEA_MASK_MODES.OFF as TLandSeaMaskMode,
       // when true, use the textured versions; when false, use the greyscale/solid versions
@@ -44,7 +43,7 @@ export const useGlobeControlStore = defineStore("globeControl", {
       varinfo: undefined as TVarInfo | undefined, // info about a dataset coming directly from the data
       selection: { low: 0, high: 0 } as TBounds, // all the knobs and buttons in GlobeControl which do not require a reload
       colormap: "turbo" as TColorMap,
-      invertColormap: true,
+      invertColormap: false,
       temperatureUnitCelsius: true,
       userBoundsLow: undefined as number | undefined,
       userBoundsHigh: undefined as number | undefined,
